@@ -6,15 +6,15 @@ import (
 	"github.com/biogo/hts/sam"
 	"github.com/brentp/irelate/parsers"
 	"github.com/brentp/xopen"
+	log "github.com/sirupsen/logrus"
 	"io"
-	"os"
+	"math"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var CurrCoverage []int
-var CurrRegionStart int
-var CurrRegionEnd int
 
 type ip struct {
 	chrom string
@@ -46,9 +46,9 @@ type readinterval struct {
 	first bool
 }
 
-func Analyse(bamFile string, intervalsFile string) {
+func Analyse(bamFile string, intervalsFile string, format string) {
 	//get intervals
-	fmt.Fprintf(os.Stderr, "Opening file intervals: %q\n", intervalsFile)
+	log.Info(fmt.Sprintf("Opening file intervals: %q", intervalsFile))
 	rdr, err := xopen.Ropen(intervalsFile)
 	check(err)
 	defer rdr.Close()
@@ -64,21 +64,43 @@ func Analyse(bamFile string, intervalsFile string) {
 		s, err := strconv.Atoi(toks[1])
 		e, err := strconv.Atoi(toks[2])
 		var infos []Info
-		err = json.Unmarshal([]byte(toks[3]), &infos)
-		if err != nil {
-			fmt.Println("error:", err)
+		switch format {
+		case "bed":
+			infos = nil
+		case "gff":
+			err = json.Unmarshal([]byte(toks[3]), &infos)
+			if err != nil {
+				fmt.Println("error:", err)
+			}
+		default:
+			panic(fmt.Sprintf("Format %s is not valid.", format))
 		}
-		//fmt.Fprintf(os.Stderr, "%+v\n", infos)
+		//log.Debug( fmt.Sprintf("%+v\n", infos))
 		intervals = append(intervals, Interval{toks[0], s, e, infos})
 
 	}
 
 	// open bam file
 	b, _ := parsers.NewBamQueryable(bamFile) // 0-based half open
-	for _, i := range intervals {
-		fmt.Printf("### Calculating coverage for:\n%s\n", i.String())
+	intervalCount := len(intervals)
+	intervalProgress := -1
+	template := "[%s%s] %d%% %d/%d %s"
+	startTime := time.Now()
+	log.Info(fmt.Sprintf("Going to process %d intervals", intervalCount))
+	for intervalPos, i := range intervals {
+		log.Debug(fmt.Sprintf("Calculating coverage for interval %d: %s", intervalPos, i.String()))
 		reg := ip{i.chrom, uint32(i.start), uint32(i.end)}
 		processReads(b, reg)
+		intervalPercentage := int((float64(intervalPos) / float64(intervalCount)) * 100)
+		if intervalPercentage >= intervalProgress+1 {
+			progressSize := int(math.Ceil(float64(intervalPercentage) * 0.75))
+			progressBar := strings.Repeat("#", progressSize)
+			restSize := 75 - progressSize
+			restBar := strings.Repeat("-", restSize)
+
+			log.Info(fmt.Sprintf(template, progressBar, restBar, intervalPercentage, intervalPos, intervalCount, time.Since(startTime)))
+			intervalProgress = intervalProgress + 1
+		}
 	}
 
 }
@@ -88,7 +110,7 @@ func processReads(bamFile *parsers.BamQueryable, interval ip) {
 	CurrCoverage = make([]int, intervalSize)
 	q, err := bamFile.Query(interval)
 	if err != nil {
-		fmt.Println(os.Stderr, "Region did not contain any reads\n")
+		log.Warn("Region did not contain any reads")
 	}
 	heap := make(map[string]readinterval)
 
@@ -97,52 +119,53 @@ func processReads(bamFile *parsers.BamQueryable, interval ip) {
 		read := rec.(*parsers.Bam)
 
 		if read.Flags&sam.Unmapped != 0 {
-			fmt.Fprintf(os.Stderr, "skipped, read is unmappped %d\n", read.Flags&sam.Duplicate)
+			log.Debug(fmt.Sprintf("skipped, read is unmappped %d", read.Flags&sam.Duplicate))
 			continue
 		}
 
 		if read.Flags&sam.Secondary != 0 {
-			fmt.Fprintf(os.Stderr, "skipped, read is Secondary %d\n", read.Flags&sam.Duplicate)
+			log.Debug(fmt.Sprintf("skipped, read is Secondary %d", read.Flags&sam.Duplicate))
 			continue
 		}
 
 		if read.Record.MapQ < 1 {
-			fmt.Fprint(os.Stderr, "skipped, read mapping is low quality\n")
+			log.Debug("skipped, read mapping is low quality")
 			continue
 		}
 
-		//if read.Flags&sam.Duplicate != 0 {
-		//	fmt.Fprintf(os.Stderr, "skipped, read is duplicate %d\n", read.Flags&sam.Duplicate)
-		//	continue
-		//}
+		if read.Flags&sam.Duplicate != 0 {
+			log.Debug(fmt.Sprintf("skipped, read is duplicate %d", read.Flags&sam.Duplicate))
+			continue
+		}
 
 		// Skip if not a proper pair
 		if read.Flags&sam.Paired != 0 &&
 			read.Flags&sam.ProperPair != 0 &&
 			read.Flags&sam.MateUnmapped != 0 {
-			fmt.Fprintf(os.Stderr, "skipped, read badPair check, flag %v\n", read.Flags)
+			log.Debug(fmt.Sprintf("skipped, read badPair check, flag %v", read.Flags))
 			continue
 		}
 
 		// Skip if wrong coordinates
 		if ((read.Pos < read.MatePos) && read.Flags&sam.Reverse != 0) ||
 			((read.MatePos < read.Pos) && read.Flags&sam.MateReverse != 0) {
-			fmt.Fprintf(os.Stderr, "skipped, chemically designed: left on positive strand, right on reverse one, flag %v\n", read.Flags)
+			log.Debug(fmt.Sprintf("skipped, chemically designed: left on positive strand, right on reverse one, flag %v", read.Flags))
 			//chemically designed: left on positive strand, right on reverse one
 			continue
 		}
 
-		//fmt.Fprintf(os.Stderr, "Found read on %s:%d-%d with MQ %d and flags %v\n", rec.Chrom(), rec.Start(), rec.End(), read.MapQ, read.Flags,)
+		//log.Debug( fmt.Sprintf("Found read on %s:%d-%d with MQ %d and flags %v\n", rec.Chrom(), rec.Start(), rec.End(), read.MapQ, read.Flags,))
 		end := int(read.End())
+
 		overlap := (2 * read.Len()) - abs(read.TempLen)
 		//duplicate := 1
 		//if read.Flags&sam.Duplicate == 0 {
 		//	duplicate = 0
 		//}
 		//if read.MapQ <= 40 {
-		//	fmt.Fprintf(os.Stderr, "Found the other read with lower MQ: %s\n", read.MapQ)
+		//	log.Debug( fmt.Sprintf("Found the other read with lower MQ: %s\n", read.MapQ))
 		//}
-		fmt.Printf("%s\t%v\t%s\t%d\t%s:%d-%d\t%d\tmate\t%s:%d\t%d\t%d\t%d\n",
+		log.Debug(fmt.Sprintf("%s\t%v\t%s\t%d\t%s:%d-%d\t%d\tmate\t%s:%d\t%d\t%d\t%d",
 			read.Name,
 			read.Flags,
 			read.Cigar,
@@ -156,57 +179,56 @@ func processReads(bamFile *parsers.BamQueryable, interval ip) {
 			read.TempLen,
 			overlap,
 			end-read.MatePos,
-			//read.AuxFields,
-		)
+		//read.AuxFields,
+		))
 		if read.Flags&sam.Read1 != 0 {
 			if readi, ok := heap[read.Name]; ok {
 				if !readi.first {
-					fmt.Fprintf(os.Stderr, "Found the other read2 on the heap, checking overlap for read: %s\n", read.Name)
+					log.Debug(fmt.Sprintf("Found the other read2 on the heap, checking overlap for read: %s", read.Name))
 					//add coverage minus overlap
 					addcoverage(removeoverlap(readi, readinterval{read.Ref.Name(), read.Pos, end, true}), interval)
 					delete(heap, read.Name)
 				}
 			} else {
 				heap[read.Name] = readinterval{read.Ref.Name(), read.Pos, end, true}
-				fmt.Fprintf(os.Stderr, "Added first read %s to heap\n", read.Name)
+				log.Debug(fmt.Sprintf("Added first read %s to heap", read.Name))
 			}
 			addcoverage(readinterval{read.Ref.Name(), read.Pos, end, true}, interval)
 
 		}
 		if read.Flags&sam.Read2 != 0 {
 			if readi, ok := heap[read.Name]; ok {
-				fmt.Fprintf(os.Stderr, "Found the other read1 on the heap, checking overlap for read: %s\n", read.Name)
+				log.Debug(fmt.Sprintf("Found the other read1 on the heap, checking overlap for read: %s", read.Name))
 				//add coverage minus overlap
 				addcoverage(removeoverlap(readinterval{read.Ref.Name(), read.Pos, end, false}, readi), interval)
 				delete(heap, read.Name)
 			} else {
 				heap[read.Name] = readinterval{read.Ref.Name(), read.Pos, end, false}
-				fmt.Fprintf(os.Stderr, "Added second read %s to heap\n", read.Name)
+				log.Debug(fmt.Sprintf("Added second read %s to heap", read.Name))
 			}
 		}
 		j++
 	}
-	fmt.Fprintf(os.Stderr, "%d reads left on the heap\n", len(heap))
+	log.Debug(fmt.Sprintf("%d reads left on the heap", len(heap)))
 	// add coverage from reads on the heap
 	for _, heapread := range heap {
 		addcoverage(heapread, interval)
 	}
-	fmt.Fprintf(os.Stderr, "%d reads found in the interval\n", j)
-	fmt.Fprintf(os.Stderr, "Coverage string: %v\n", CurrCoverage)
-	//for i, coverage_i := range CurrCoverage {
-	//	fmt.Fprintf(os.Stderr, "chr1\t%d\t%d\n", i+CurrRegionStart, coverage_i)
-	//}
-
+	log.Debug(fmt.Sprintf("%d reads found in the interval", j))
+	log.Debug(fmt.Sprintf("Coverage string: %v", CurrCoverage))
+	for i, coverage_i := range CurrCoverage {
+		fmt.Printf("%s\t%d\t%d\tNA\t%d\n", interval.chrom, 1+i+int(interval.start), 2+i+int(interval.start), coverage_i)
+	}
 }
 
 func removeoverlap(reada readinterval, readb readinterval) readinterval {
 	// remove overlap from reada/read2
 	if reada.first || !readb.first {
-		fmt.Fprint(os.Stderr, "Can't substract read 2 from read 1\n")
+		log.Debug("Can't substract read 2 from read 1")
 		return reada
 	}
 	if reada.chrom != readb.chrom {
-		fmt.Fprint(os.Stderr, "Reads in pair on different chromosomes\n")
+		log.Debug("Reads in pair on different chromosomes")
 		return reada
 	}
 	overlap := 0
@@ -224,7 +246,7 @@ func removeoverlap(reada readinterval, readb readinterval) readinterval {
 		}
 
 	}
-	fmt.Fprintf(os.Stderr, "%d overlap\n", overlap)
+	log.Debug(fmt.Sprintf("%d overlap", overlap))
 	//readinterval{read.Ref.Name(), read.Pos, end, true}
 	//	chrom string
 	// start int
@@ -236,10 +258,10 @@ func removeoverlap(reada readinterval, readb readinterval) readinterval {
 
 func addcoverage(read readinterval, interval ip) {
 	//readinterval{read.Ref.Name(), read.Pos, end, true}
-	fmt.Fprintf(os.Stderr, "Add coverage %s:%d..%d\n", read.chrom, read.start, read.end)
+	log.Debug(fmt.Sprintf("Add coverage %s:%d..%d", read.chrom, read.start, read.end))
 	coverageNetStart := max(read.start, int(interval.start)) - int(interval.start)
 	coverageNetEnd := min(read.end, int(interval.end)) - int(interval.start)
-	fmt.Fprintf(os.Stderr, "net coverage %d..%d\n", coverageNetStart+int(interval.start), coverageNetEnd+int(interval.start))
+	log.Debug(fmt.Sprintf("net coverage %d..%d", coverageNetStart+int(interval.start), coverageNetEnd+int(interval.start)))
 
 	for i := coverageNetStart; i < coverageNetEnd; i++ {
 		CurrCoverage[i]++

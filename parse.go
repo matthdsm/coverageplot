@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/brentp/xopen"
+	log "github.com/sirupsen/logrus"
 	"io"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -26,7 +26,7 @@ func max(a, b int) int {
 }
 
 func Parse(gffFile string) {
-	fmt.Fprintf(os.Stderr, "Opening file: %q\n", gffFile)
+	log.Info(fmt.Sprintf("Opening file: %q", gffFile))
 	for intervals := range exons(gffFile) {
 		for _, i := range intervals {
 			fmt.Printf("%s\n", i.String())
@@ -34,9 +34,10 @@ func Parse(gffFile string) {
 	}
 }
 
-func Merge(intervalFile string, expand int) {
-	fmt.Fprintf(os.Stderr, "Opening file: %q\n", intervalFile)
-	fmt.Fprintf(os.Stderr, "Expanding exons with %d bp at both ends\n", expand)
+func Merge(intervalFile string, expand int, format string) {
+	log.Info(fmt.Sprintf("Opening file: %q", intervalFile))
+	log.Info(fmt.Sprintf("Writing output to stdout in %s format", format))
+	log.Info(fmt.Sprintf("Expanding exons with %d bp at both ends", expand))
 	rdr, err := xopen.Ropen(intervalFile)
 	check(err)
 	defer rdr.Close()
@@ -45,6 +46,7 @@ func Merge(intervalFile string, expand int) {
 	var start int = 0
 	var end int = 4294967295
 	var info []string
+	var strand []string
 	for {
 		line, err := rdr.ReadString('\n')
 		if err == io.EOF {
@@ -58,12 +60,21 @@ func Merge(intervalFile string, expand int) {
 		}
 		s, err := strconv.Atoi(toks[1])
 		e, err := strconv.Atoi(toks[2])
+		if e < s {
+			log.Warn("region start has to be the left most coordinate, but a switched region found, fix your input file")
+		}
 		if end == 4294967295 {
 			chrom = strings.TrimPrefix(toks[0], "chr")
 			start = s
 			end = e
 			info = nil
 			info = append(info, toks[3])
+			strand = nil
+			if len(toks) > 5 {
+				strand = append(strand, toks[5])
+			} else {
+				strand = append(strand, "+")
+			}
 		}
 		if chrom == strings.TrimPrefix(toks[0], "chr") && s >= start && s <= (end+expand+expand) {
 			start = min(s, start)
@@ -75,24 +86,44 @@ func Merge(intervalFile string, expand int) {
 			if info != nil && toks[3] != info[len(info)-1] {
 				info = append(info, toks[3])
 			}
+			if len(toks) > 5 {
+				strand = append(strand, toks[5])
+			}
 		} else {
-			// if gff input convert from 1-based coordinates to 0-based coordinates
-			// we currently use bed so coordinates are already 0-based
-			fmt.Printf("%s\t%d\t%d\t[%s]\n", chrom, max(0, start-expand), end+expand, strings.Join(info, ","))
+			fmt.Print(FormatLine(format, chrom, start-expand, end+expand, info, "0", strand))
 			totLength = totLength + (end - start)
 			chrom = strings.TrimPrefix(toks[0], "chr")
 			start = s
 			end = e
 			info = nil
 			info = append(info, toks[3])
-			totLength = totLength + (end - start)
+			strand = nil
+			if len(toks) > 5 {
+				strand = append(strand, toks[5])
+			} else {
+				strand = append(strand, "+")
+			}
 		}
 	}
 	//print last interval
-	fmt.Printf("%s\t%d\t%d\t[%s]\n", chrom, start-expand-1, end+expand, strings.Join(info, ","))
+	fmt.Print(FormatLine(format, chrom, start-expand, end+expand, info, "0", strand))
+	totLength = totLength + (end - start)
 	// total of all intervals
-	fmt.Fprintf(os.Stderr, "Total size (in kbp): %d\n", totLength/1000)
+	log.Info(fmt.Sprintf("Total size (in kbp): %d", totLength/1000))
 
+}
+
+func FormatLine(format string, chrom string, start int, end int, info []string, score string, strand []string) string {
+	switch format {
+	case "bed":
+		// if bed the coordinates are already 0-based
+		return fmt.Sprintf("%s\t%d\t%d\t%s\t%s\t%s\n", chrom, max(0, start), end, strings.Join(info, "|"), score, strings.Join(strand, ","))
+	case "gff":
+		// if gff input convert from 1-based coordinates to 0-based coordinates
+		return fmt.Sprintf("%s\t%d\t%d\t[%s]\t%s\t%s\n", chrom, max(0, start-1), end, strings.Join(info, ","), score, strand[0])
+	default:
+		panic(fmt.Sprintf("Format %s is not valid.\n", format))
+	}
 }
 
 type Info struct {

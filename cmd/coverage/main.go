@@ -8,8 +8,8 @@ package main
 import (
 	"flag"
 	"fmt"
+	log "github.com/sirupsen/logrus"
 	coverage "gitlab.cmgg.be/cmgg/coverageplot"
-	"log"
 	"os"
 	"strconv"
 	"time"
@@ -19,6 +19,7 @@ func main() {
 	analyseCommand := flag.NewFlagSet("analyse", flag.ExitOnError)
 	analyseIntervalsFlag := analyseCommand.String("intervals", "", "Input the sorted and merged interval file.")
 	bamFlag := analyseCommand.String("bam", "", "Input bam file, a sorted and indexed file is required.")
+	formatFlagAnalyse := analyseCommand.String("format", "bed", "format of the intervals file (bed|gff)")
 
 	serveCommand := flag.NewFlagSet("serve", flag.ExitOnError)
 
@@ -28,6 +29,7 @@ func main() {
 	mergeCommand := flag.NewFlagSet("merge", flag.ExitOnError)
 	intervalsFlag := mergeCommand.String("intervals", "", "Input the sorted interval file.")
 	expandFlag := mergeCommand.String("expand", "", "Expand the interval with # bp on each side")
+	formatFlag := mergeCommand.String("format", "bed", "format of the input and output files (bed|gff)")
 
 	if len(os.Args) == 1 {
 		fmt.Println(os.Stderr, "usage: coverage <command> [<args>]")
@@ -49,8 +51,16 @@ func main() {
 	case "merge":
 		mergeCommand.Parse(os.Args[2:])
 	default:
-		fmt.Fprintf(os.Stderr, "%q is not valid command.\n", os.Args[1])
+		log.Debug(fmt.Sprintf("%q is not valid command.\n", os.Args[1]))
 		os.Exit(2)
+	}
+
+	Environment := os.Getenv("Environment")
+	if Environment == "development" {
+		log.SetLevel(log.DebugLevel)
+	} else {
+		// The TextFormatter is default, you don't actually have to do this.
+		log.SetLevel(log.InfoLevel)
 	}
 
 	if analyseCommand.Parsed() {
@@ -62,8 +72,12 @@ func main() {
 			fmt.Println(os.Stderr, "Please supply a sorted and merged interval file using -intervals option.")
 			return
 		}
-		fmt.Fprintf(os.Stderr, "Analysing bam file %q using intervals %q\n", *bamFlag, *analyseIntervalsFlag)
-		coverage.Analyse(*bamFlag, *analyseIntervalsFlag)
+		if *formatFlagAnalyse != "bed" && *formatFlagAnalyse != "gff" {
+			fmt.Println(os.Stderr, "Please supply a valid format (bed|gff) using -format option.")
+			os.Exit(2)
+		}
+		log.Info(fmt.Sprintf("Analysing bam file %q using intervals %q", *bamFlag, *analyseIntervalsFlag))
+		coverage.Analyse(*bamFlag, *analyseIntervalsFlag, *formatFlagAnalyse)
 	}
 
 	if serveCommand.Parsed() {
@@ -74,7 +88,7 @@ func main() {
 		if *gffFlag == "" {
 			fmt.Println(os.Stderr, "Please supply a gff file as input using -gff option.")
 		}
-		fmt.Fprintf(os.Stderr, "Converting: %q\n", *gffFlag)
+		log.Info(fmt.Sprintf("Converting: %q", *gffFlag))
 		coverage.Parse(*gffFlag)
 
 	}
@@ -82,12 +96,16 @@ func main() {
 		if *intervalsFlag == "" {
 			fmt.Println(os.Stderr, "Please supply a bed file as input using -intervals option.")
 		}
+		if *formatFlag != "bed" && *formatFlag != "gff" {
+			fmt.Println(os.Stderr, "Please supply a valid format (bed|gff) using -format option.")
+			os.Exit(2)
+		}
 		expand := 20
 		if *expandFlag != "" {
 			expand, _ = strconv.Atoi(*expandFlag)
 		}
-		fmt.Fprintf(os.Stderr, "Merging intervals: %q\n", *intervalsFlag)
-		coverage.Merge(*intervalsFlag, expand)
+		log.Info(fmt.Sprintf("Merging intervals: %q", *intervalsFlag))
+		coverage.Merge(*intervalsFlag, expand, *formatFlag)
 
 	}
 }
