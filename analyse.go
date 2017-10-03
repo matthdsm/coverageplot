@@ -14,8 +14,6 @@ import (
 	"time"
 )
 
-var CurrCoverage []int
-
 type ip struct {
 	chrom string
 	start uint32
@@ -107,7 +105,9 @@ func Analyse(bamFile string, intervalsFile string, format string) {
 
 func processReads(bamFile *parsers.BamQueryable, interval ip) {
 	intervalSize := interval.end - interval.start
+	var CurrCoverage []int
 	CurrCoverage = make([]int, intervalSize)
+
 	q, err := bamFile.Query(interval)
 	if err != nil {
 		log.Warn("Region did not contain any reads")
@@ -186,21 +186,21 @@ func processReads(bamFile *parsers.BamQueryable, interval ip) {
 				if !readi.first {
 					log.Debug(fmt.Sprintf("Found the other read2 on the heap, checking overlap for read: %s", read.Name))
 					//add coverage minus overlap
-					addcoverage(removeoverlap(readi, readinterval{read.Ref.Name(), read.Pos, end, true}), interval)
+					CurrCoverage = addcoverage(CurrCoverage, removeoverlap(readi, readinterval{read.Ref.Name(), read.Pos, end, true}), interval)
 					delete(heap, read.Name)
 				}
 			} else {
 				heap[read.Name] = readinterval{read.Ref.Name(), read.Pos, end, true}
 				log.Debug(fmt.Sprintf("Added first read %s to heap", read.Name))
 			}
-			addcoverage(readinterval{read.Ref.Name(), read.Pos, end, true}, interval)
+			CurrCoverage = addcoverage(CurrCoverage, readinterval{read.Ref.Name(), read.Pos, end, true}, interval)
 
 		}
 		if read.Flags&sam.Read2 != 0 {
 			if readi, ok := heap[read.Name]; ok {
 				log.Debug(fmt.Sprintf("Found the other read1 on the heap, checking overlap for read: %s", read.Name))
 				//add coverage minus overlap
-				addcoverage(removeoverlap(readinterval{read.Ref.Name(), read.Pos, end, false}, readi), interval)
+				CurrCoverage = addcoverage(CurrCoverage, removeoverlap(readinterval{read.Ref.Name(), read.Pos, end, false}, readi), interval)
 				delete(heap, read.Name)
 			} else {
 				heap[read.Name] = readinterval{read.Ref.Name(), read.Pos, end, false}
@@ -212,12 +212,12 @@ func processReads(bamFile *parsers.BamQueryable, interval ip) {
 	log.Debug(fmt.Sprintf("%d reads left on the heap", len(heap)))
 	// add coverage from reads on the heap
 	for _, heapread := range heap {
-		addcoverage(heapread, interval)
+		CurrCoverage = addcoverage(CurrCoverage, heapread, interval)
 	}
 	log.Debug(fmt.Sprintf("%d reads found in the interval", j))
 	log.Debug(fmt.Sprintf("Coverage string: %v", CurrCoverage))
 	for i, coverage_i := range CurrCoverage {
-		fmt.Printf("%s\t%d\t%d\tNA\t%d\n", interval.chrom, 1+i+int(interval.start), 2+i+int(interval.start), coverage_i)
+		fmt.Printf("chr%s\t%d\t%d\tNA\t%d\n", interval.chrom, i+int(interval.start), 1+i+int(interval.start), coverage_i)
 	}
 }
 
@@ -256,7 +256,7 @@ func removeoverlap(reada readinterval, readb readinterval) readinterval {
 	return reada
 }
 
-func addcoverage(read readinterval, interval ip) {
+func addcoverage(CurrCoverage []int, read readinterval, interval ip) []int {
 	//readinterval{read.Ref.Name(), read.Pos, end, true}
 	log.Debug(fmt.Sprintf("Add coverage %s:%d..%d", read.chrom, read.start, read.end))
 	coverageNetStart := max(read.start, int(interval.start)) - int(interval.start)
@@ -266,6 +266,7 @@ func addcoverage(read readinterval, interval ip) {
 	for i := coverageNetStart; i < coverageNetEnd; i++ {
 		CurrCoverage[i]++
 	}
+	return CurrCoverage
 }
 
 //func resetChromCoverage() {

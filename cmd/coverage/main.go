@@ -21,6 +21,11 @@ func main() {
 	bamFlag := analyseCommand.String("bam", "", "Input bam file, a sorted and indexed file is required.")
 	formatFlagAnalyse := analyseCommand.String("format", "bed", "format of the intervals file (bed|gff)")
 
+	statisticsCommand := flag.NewFlagSet("statistics", flag.ExitOnError)
+	statisticsIntervalsFlag := statisticsCommand.String("intervals", "", "Input the sorted panel bed file file.")
+	statisticsCoverageFlag := statisticsCommand.String("coverage", "", "Input the sorted coverage bed file .")
+	statisticsPanelFlag := statisticsCommand.String("panel", "", "Input a name for the panel (default: NA).")
+
 	serveCommand := flag.NewFlagSet("serve", flag.ExitOnError)
 
 	intervalsCommand := flag.NewFlagSet("intervals", flag.ExitOnError)
@@ -50,6 +55,8 @@ func main() {
 		intervalsCommand.Parse(os.Args[2:])
 	case "merge":
 		mergeCommand.Parse(os.Args[2:])
+	case "statistics":
+		statisticsCommand.Parse(os.Args[2:])
 	default:
 		log.Debug(fmt.Sprintf("%q is not valid command.\n", os.Args[1]))
 		os.Exit(2)
@@ -61,6 +68,22 @@ func main() {
 	} else {
 		// The TextFormatter is default, you don't actually have to do this.
 		log.SetLevel(log.InfoLevel)
+	}
+
+	if statisticsCommand.Parsed() {
+		if *statisticsIntervalsFlag == "" {
+			fmt.Println(os.Stderr, "Please supply a sorted panel bed file using -intervals option.")
+			os.Exit(2)
+		}
+		if *statisticsCoverageFlag == "" {
+			fmt.Println(os.Stderr, "Please supply a sorted coverage bed file using -coverage option.")
+			os.Exit(2)
+		}
+		if *statisticsPanelFlag == "" {
+			*statisticsPanelFlag = "NA"
+		}
+		log.Info(fmt.Sprintf("Analysing file %q using intervals %q", *statisticsCoverageFlag, *statisticsIntervalsFlag))
+		coverage.Statistics(*statisticsIntervalsFlag, *statisticsCoverageFlag, *statisticsPanelFlag)
 	}
 
 	if analyseCommand.Parsed() {
