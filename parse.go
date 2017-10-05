@@ -90,7 +90,7 @@ func Merge(intervalFile string, expand int, format string) {
 				strand = append(strand, toks[5])
 			}
 		} else {
-			fmt.Print(FormatLine(format, chrom, start-expand, end+expand, info, "0", strand))
+			fmt.Print(FormatLine(format, chrom, start-expand, end+expand, info, "0", strand, expand))
 			totLength = totLength + (end - start)
 			chrom = strings.TrimPrefix(toks[0], "chr")
 			start = s
@@ -106,21 +106,39 @@ func Merge(intervalFile string, expand int, format string) {
 		}
 	}
 	//print last interval
-	fmt.Print(FormatLine(format, chrom, start-expand, end+expand, info, "0", strand))
+	fmt.Print(FormatLine(format, chrom, start-expand, end+expand, info, "0", strand, expand))
 	totLength = totLength + (end - start)
 	// total of all intervals
-	log.Info(fmt.Sprintf("Total size (in kbp): %d", totLength/1000))
+	log.Info(fmt.Sprintf("Total size (in kbp): %.3f", float64(totLength)/1000))
 
 }
 
-func FormatLine(format string, chrom string, start int, end int, info []string, score string, strand []string) string {
+func FormatLine(format string, chrom string, start int, end int, info []string, score string, strand []string, expand int) string {
+
+	cleanStart := start
+	cleanEnd := end
+
+	if val, ok := maxLength[chrom]; ok {
+		if cleanStart-expand > val {
+			log.Debug(fmt.Sprintf("Trimmed chr %s start %d based on max length %d", chrom, cleanStart, val))
+			cleanStart = val
+		}
+		if cleanEnd > val-expand {
+			log.Debug(fmt.Sprintf("Trimmed chr %s end %d based on max length %d", chrom, cleanEnd, val))
+			cleanEnd = val - expand
+		}
+		if cleanStart == cleanEnd {
+			log.Fatal("Segment outside of scope defiend by dict")
+		}
+	}
+
 	switch format {
 	case "bed":
 		// if bed the coordinates are already 0-based
-		return fmt.Sprintf("%s\t%d\t%d\t%s\t%s\t%s\n", chrom, max(0, start), end, strings.Join(info, "|"), score, strings.Join(strand, ","))
+		return fmt.Sprintf("%s\t%d\t%d\t%s\t%s\t%s\n", chrom, max(0, cleanStart), cleanEnd, strings.Join(info, "|"), score, strings.Join(strand, ","))
 	case "gff":
 		// if gff input convert from 1-based coordinates to 0-based coordinates
-		return fmt.Sprintf("%s\t%d\t%d\t[%s]\t%s\t%s\n", chrom, max(0, start-1), end, strings.Join(info, ","), score, strand[0])
+		return fmt.Sprintf("%s\t%d\t%d\t[%s]\t%s\t%s\n", chrom, max(0, cleanStart-1), cleanEnd, strings.Join(info, ","), score, strand[0])
 	default:
 		panic(fmt.Sprintf("Format %s is not valid.\n", format))
 	}
@@ -150,7 +168,7 @@ func (i Interval) String() string {
 
 func check(e error) {
 	if e != nil {
-		panic(e)
+		log.Fatal(e)
 	}
 }
 

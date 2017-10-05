@@ -217,7 +217,7 @@ func processReads(bamFile *parsers.BamQueryable, interval ip) {
 	log.Debug(fmt.Sprintf("%d reads found in the interval", j))
 	log.Debug(fmt.Sprintf("Coverage string: %v", CurrCoverage))
 	for i, coverage_i := range CurrCoverage {
-		fmt.Printf("chr%s\t%d\t%d\tNA\t%d\n", interval.chrom, i+int(interval.start), 1+i+int(interval.start), coverage_i)
+		fmt.Printf("%s\t%d\t%d\tNA\t%d\n", interval.chrom, i+int(interval.start), 1+i+int(interval.start), coverage_i)
 	}
 }
 

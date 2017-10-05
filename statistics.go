@@ -1,11 +1,13 @@
 package coverageplot
 
 import (
+	"bufio"
 	"fmt"
 	"github.com/brentp/xopen"
 	"github.com/montanaflynn/stats"
 	log "github.com/sirupsen/logrus"
 	"io"
+	"os/exec"
 	"strconv"
 	"strings"
 )
@@ -37,6 +39,7 @@ type Statistic struct {
 	Exon_ensemble        string
 	Rank                 string
 	Size                 int
+	Coverage             []float64
 	Min                  float64
 	Max                  float64
 	Mean                 float64
@@ -55,12 +58,22 @@ func Statistics(intervalsFile string, coverageBed string, panelName string) {
 	defer rdr.Close()
 
 	log.Info(fmt.Sprintf("Opening file coverage bed: %q", coverageBed))
-	rdr_cov, err := xopen.Ropen(coverageBed)
+	log.Debug(fmt.Sprintf("Using command: |tabix -R %s %s", intervalsFile, coverageBed))
+	//fmt.Sprintf("|tabix %s %s", intervalsFile, coverageBed)
+	//rdr_cov, err := xopen.Ropen("|head -n50 data/D1706395.chr_5000lines.coverage.bed")
+	var rdr_test io.Reader
+	var cmd *exec.Cmd
+	cmd = exec.Command("sh", "-c", fmt.Sprintf("tabix -R %s %s", intervalsFile, coverageBed))
+	rdr_test, err = cmd.StdoutPipe()
+	err = cmd.Start()
 	check(err)
-	defer rdr_cov.Close()
+	rdr_cov := bufio.NewReader(rdr_test)
+	//check(err)
+	//defer rdr_cov.Close()
 
 	//var intervals []BedInterval
 	var totLength int = 0
+	var TotalCoverage []float64
 
 	for {
 		line, err := rdr.ReadString('\n')
@@ -94,9 +107,10 @@ func Statistics(intervalsFile string, coverageBed string, panelName string) {
 		CurrCoverage = make([]float64, interval.Size())
 		log.Debug(fmt.Sprintf("Create coverage for %dbp region", interval.Size()))
 		for {
-			cov_line, err := rdr_cov.ReadString('\n')
+			cov_line, err := rdr_cov.ReadString(byte('\n'))
 			cov_toks := strings.Split(strings.TrimSuffix(cov_line, "\n"), "\t")
 			if err == io.EOF {
+				log.Debug("Break EOF")
 				break
 			} else {
 				check(err)
@@ -113,6 +127,7 @@ func Statistics(intervalsFile string, coverageBed string, panelName string) {
 		stat.Gene_panel = panelName
 		stat.Genome_build = "GRCh38"
 		stat.Chromosome = interval.chrom
+		stat.Coverage = CurrCoverage
 		stat.Start = interval.start
 		stat.End = interval.end
 		stat.Gene = interval.info[0].Gene
@@ -133,15 +148,34 @@ func Statistics(intervalsFile string, coverageBed string, panelName string) {
 		stat.Histogram = histo.Buckets
 		stat.Zero_bases = stat.Histogram[0]
 		if stat.Zero_bases > 0 {
-			log.Warn(fmt.Sprintf("Zero coverage for %d bases", stat.Zero_bases))
+			log.Warn(fmt.Sprintf("Zero coverage for %d bases, exon %s, %s:%d-%d", stat.Zero_bases, stat.Exon_ensemble, stat.Chromosome, stat.Start, stat.End))
 		}
 
 		// my @my_header = ("Gene_panel","Genome_build","Chromosome", "start", "end", "Gene", "Transcripts_ensembl", "Transcripts_refseq", "Exon_ensemble", "Rank", "Target_region_length", "Min_coverage", "Max_coverage", "Mean_coverage", "Median_coverage", "Zero_coverage_bases", "Proportion_covered","Target_region_length_with_coverage_above_20", "Percentage_with_coverage_above_20", "Target_region_length_with_coverage_above_30","Percentage_with_coverage_above_30"); # to output
 		log.Debug(fmt.Sprintf("Stats: %v", stat))
+		TotalCoverage = append(TotalCoverage, CurrCoverage...)
 
 	}
 	// total of all intervals
-	log.Info(fmt.Sprintf("Total selected size (in kbp): %d", totLength/1000))
+	log.Info(fmt.Sprintf("Total selected size (in kbp): %.3f", float64(totLength)/1000))
+	var totalStat Statistic
+	totalStat.Gene_panel = panelName
+	totalStat.Genome_build = "GRCh38"
+	totalStat.Start = 0
+	totalStat.End = len(TotalCoverage)
+	totalStat.Size = totLength
+	totalStat.Quartiles, _ = stats.Quartile(TotalCoverage)
+	totalStat.Mean, _ = stats.Mean(TotalCoverage)
+	totalStat.Min, _ = stats.Min(TotalCoverage)
+	totalStat.Max, _ = stats.Max(TotalCoverage)
+	totalStat.StdDev, _ = stats.StandardDeviation(TotalCoverage)
+	var totalHisto Histogram
+	totalHisto.init([]float64{0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100})
+	totalHisto.AddAll(TotalCoverage)
+	totalStat.CummulativeHistogram = totalHisto.BucketsCumm
+	totalStat.Histogram = totalHisto.Buckets
+	totalStat.Zero_bases = totalStat.Histogram[0]
+	log.Debug(fmt.Sprintf("Total Stats: %v", totalStat))
 
 }
 
