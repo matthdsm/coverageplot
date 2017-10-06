@@ -2,6 +2,7 @@ package coverageplot
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"github.com/brentp/xopen"
 	"github.com/montanaflynn/stats"
@@ -50,7 +51,19 @@ type Statistic struct {
 	Histogram            []int
 }
 
+type StatisticOutput struct {
+	Name    string
+	Total   Statistic
+	Regions []Statistic
+}
+
 func Statistics(intervalsFile string, coverageBed string, panelName string) {
+	PanelStats := CalculateStatistics(intervalsFile, coverageBed, panelName)
+	data, _ := json.Marshal(PanelStats)
+	fmt.Println(string(data))
+}
+
+func CalculateStatistics(intervalsFile string, coverageBed string, panelName string) StatisticOutput {
 	//get intervals
 	log.Info(fmt.Sprintf("Opening file intervals bed: %q", intervalsFile))
 	rdr, err := xopen.Ropen(intervalsFile)
@@ -74,7 +87,9 @@ func Statistics(intervalsFile string, coverageBed string, panelName string) {
 	//var intervals []BedInterval
 	var totLength int = 0
 	var TotalCoverage []float64
-
+	var LastInterval BedInterval
+	var PanelStats StatisticOutput
+	PanelStats.Name = panelName
 	for {
 		line, err := rdr.ReadString('\n')
 		if err == io.EOF {
@@ -153,30 +168,37 @@ func Statistics(intervalsFile string, coverageBed string, panelName string) {
 
 		// my @my_header = ("Gene_panel","Genome_build","Chromosome", "start", "end", "Gene", "Transcripts_ensembl", "Transcripts_refseq", "Exon_ensemble", "Rank", "Target_region_length", "Min_coverage", "Max_coverage", "Mean_coverage", "Median_coverage", "Zero_coverage_bases", "Proportion_covered","Target_region_length_with_coverage_above_20", "Percentage_with_coverage_above_20", "Target_region_length_with_coverage_above_30","Percentage_with_coverage_above_30"); # to output
 		log.Debug(fmt.Sprintf("Stats: %v", stat))
-		TotalCoverage = append(TotalCoverage, CurrCoverage...)
-
+		PanelStats.Regions = append(PanelStats.Regions, stat)
+		if interval.chrom == LastInterval.chrom && interval.start < LastInterval.end {
+			indexCorrected := LastInterval.end - interval.start
+			TotalCoverage = append(TotalCoverage, CurrCoverage[indexCorrected:]...)
+		} else {
+			TotalCoverage = append(TotalCoverage, CurrCoverage...)
+		}
+		LastInterval = interval
 	}
 	// total of all intervals
 	log.Info(fmt.Sprintf("Total selected size (in kbp): %.3f", float64(totLength)/1000))
-	var totalStat Statistic
-	totalStat.Gene_panel = panelName
-	totalStat.Genome_build = "GRCh38"
-	totalStat.Start = 0
-	totalStat.End = len(TotalCoverage)
-	totalStat.Size = totLength
-	totalStat.Quartiles, _ = stats.Quartile(TotalCoverage)
-	totalStat.Mean, _ = stats.Mean(TotalCoverage)
-	totalStat.Min, _ = stats.Min(TotalCoverage)
-	totalStat.Max, _ = stats.Max(TotalCoverage)
-	totalStat.StdDev, _ = stats.StandardDeviation(TotalCoverage)
+	//var totalStat Statistic
+	PanelStats.Total.Gene_panel = panelName
+	PanelStats.Total.Genome_build = "GRCh38"
+	PanelStats.Total.Start = 0
+	PanelStats.Total.End = len(TotalCoverage)
+	PanelStats.Total.Size = totLength
+	PanelStats.Total.Quartiles, _ = stats.Quartile(TotalCoverage)
+	PanelStats.Total.Mean, _ = stats.Mean(TotalCoverage)
+	PanelStats.Total.Min, _ = stats.Min(TotalCoverage)
+	PanelStats.Total.Max, _ = stats.Max(TotalCoverage)
+	PanelStats.Total.StdDev, _ = stats.StandardDeviation(TotalCoverage)
 	var totalHisto Histogram
 	totalHisto.init([]float64{0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100})
 	totalHisto.AddAll(TotalCoverage)
-	totalStat.CummulativeHistogram = totalHisto.BucketsCumm
-	totalStat.Histogram = totalHisto.Buckets
-	totalStat.Zero_bases = totalStat.Histogram[0]
-	log.Debug(fmt.Sprintf("Total Stats: %v", totalStat))
+	PanelStats.Total.CummulativeHistogram = totalHisto.BucketsCumm
+	PanelStats.Total.Histogram = totalHisto.Buckets
+	PanelStats.Total.Zero_bases = PanelStats.Total.Histogram[0]
+	log.Debug(fmt.Sprintf("Total Stats: %v", PanelStats.Total))
 
+	return PanelStats
 }
 
 func (i BedInterval) Size() int {

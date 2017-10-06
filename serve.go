@@ -1,6 +1,7 @@
 package coverageplot
 
 import (
+	"encoding/json"
 	"github.com/gorilla/mux"
 	"github.com/meatballhat/negroni-logrus"
 	"github.com/urfave/negroni"
@@ -13,15 +14,9 @@ func Serve() *http.Server {
 	srv := &http.Server{Addr: ":8080"}
 	r := mux.NewRouter()
 
-	//put your regular handlers here
-
-	//then comes root handler
-	// r.HandleFunc("/", homePageHandler)
-	//if a path not found until now, e.g. "/image/tiny.png"
-	//this will look at "./public/image/tiny.png" at filesystem
+	r.HandleFunc("/regions", getRegionsHandler)
 	r.PathPrefix("/").Handler(http.FileServer(http.Dir("../public/")))
 
-	// Set up a request logger, useful for debugging
 	n := negroni.New()
 	n.Use(negronilogrus.NewMiddleware())
 	n.UseHandler(r)
@@ -36,4 +31,14 @@ func Serve() *http.Server {
 	}()
 
 	return srv
+}
+
+func getRegionsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	var intervalsFile string
+	var coverageBed string
+	var panelName string
+	regions := CalculateStatistics(intervalsFile, coverageBed, panelName)
+	j, _ := json.Marshal(regions)
+	w.Write(j)
 }
