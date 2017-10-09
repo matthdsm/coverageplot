@@ -12,7 +12,6 @@ import (
 	coverage "gitlab.cmgg.be/cmgg/coverageplot"
 	"os"
 	"strconv"
-	"time"
 )
 
 func main() {
@@ -136,14 +135,17 @@ func main() {
 func serve() {
 	log.Printf("main: starting HTTP server")
 	srv := coverage.Serve()
-	log.Printf("main: serving for 60 seconds")
-	time.Sleep(60 * time.Second)
-
-	log.Printf("main: stopping HTTP server")
-
-	if err := srv.Shutdown(nil); err != nil {
-		panic(err) // failure/timeout shutting down the server gracefully
+	//log.Printf("main: serving for 60 seconds")
+	if err := srv.ListenAndServe(); err != nil {
+		// cannot panic, because this probably is an intentional close
+		log.Warn(fmt.Sprintf("Httpserver: ListenAndServe() error: %s", err))
 	}
 
-	log.Printf("main: done. exiting")
+	//log.Printf("main: stopping HTTP server")
+	//
+	//if err := srv.Shutdown(nil); err != nil {
+	//	panic(err) // failure/timeout shutting down the server gracefully
+	//}
+	//
+	//log.Printf("main: done. exiting")
 }

@@ -5,8 +5,9 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/meatballhat/negroni-logrus"
 	"github.com/urfave/negroni"
-	"log"
 	"net/http"
+	"strconv"
+	"strings"
 )
 
 func Serve() *http.Server {
@@ -15,7 +16,7 @@ func Serve() *http.Server {
 	r := mux.NewRouter()
 
 	r.HandleFunc("/regions", getRegionsHandler)
-	r.PathPrefix("/").Handler(http.FileServer(http.Dir("../public/")))
+	r.PathPrefix("/").Handler(http.FileServer(http.Dir("public/")))
 
 	n := negroni.New()
 	n.Use(negronilogrus.NewMiddleware())
@@ -23,22 +24,34 @@ func Serve() *http.Server {
 
 	http.Handle("/", n)
 
-	go func() {
-		if err := srv.ListenAndServe(); err != nil {
-			// cannot panic, because this probably is an intentional close
-			log.Printf("Httpserver: ListenAndServe() error: %s", err)
-		}
-	}()
+	//go func() {
+	//	if err := srv.ListenAndServe(); err != nil {
+	//		// cannot panic, because this probably is an intentional close
+	//		log.Printf("Httpserver: ListenAndServe() error: %s", err)
+	//	}
+	//}()
 
 	return srv
 }
 
 func getRegionsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	var intervalsFile string
+	var intervals []BedInterval
 	var coverageBed string
-	var panelName string
-	regions := CalculateStatistics(intervalsFile, coverageBed, panelName)
+	coverageBed = r.FormValue("coverageBed")
+	regionParam := r.FormValue("region")
+	if regionParam != "" {
+		toks := strings.FieldsFunc(regionParam, SplitRegion)
+		s, _ := strconv.Atoi(toks[1])
+		e, _ := strconv.Atoi(toks[2])
+		info := []BedInfo{{"adhoc", "adhoc", "adhoc", "adhoc", "adhoc"}}
+		intervals = append(intervals, BedInterval{toks[0], s, e, info})
+	}
+	regions := CalculateStatistics(intervals, "intervals", coverageBed, "adhoc")
 	j, _ := json.Marshal(regions)
 	w.Write(j)
+}
+
+func SplitRegion(r rune) bool {
+	return r == ':' || r == '-'
 }

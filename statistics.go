@@ -58,38 +58,12 @@ type StatisticOutput struct {
 }
 
 func Statistics(intervalsFile string, coverageBed string, panelName string) {
-	PanelStats := CalculateStatistics(intervalsFile, coverageBed, panelName)
-	data, _ := json.Marshal(PanelStats)
-	fmt.Println(string(data))
-}
-
-func CalculateStatistics(intervalsFile string, coverageBed string, panelName string) StatisticOutput {
 	//get intervals
+	var intervals []BedInterval
 	log.Info(fmt.Sprintf("Opening file intervals bed: %q", intervalsFile))
 	rdr, err := xopen.Ropen(intervalsFile)
 	check(err)
 	defer rdr.Close()
-
-	log.Info(fmt.Sprintf("Opening file coverage bed: %q", coverageBed))
-	log.Debug(fmt.Sprintf("Using command: |tabix -R %s %s", intervalsFile, coverageBed))
-	//fmt.Sprintf("|tabix %s %s", intervalsFile, coverageBed)
-	//rdr_cov, err := xopen.Ropen("|head -n50 data/D1706395.chr_5000lines.coverage.bed")
-	var rdr_test io.Reader
-	var cmd *exec.Cmd
-	cmd = exec.Command("sh", "-c", fmt.Sprintf("tabix -R %s %s", intervalsFile, coverageBed))
-	rdr_test, err = cmd.StdoutPipe()
-	err = cmd.Start()
-	check(err)
-	rdr_cov := bufio.NewReader(rdr_test)
-	//check(err)
-	//defer rdr_cov.Close()
-
-	//var intervals []BedInterval
-	var totLength int = 0
-	var TotalCoverage []float64
-	var LastInterval BedInterval
-	var PanelStats StatisticOutput
-	PanelStats.Name = panelName
 	for {
 		line, err := rdr.ReadString('\n')
 		if err == io.EOF {
@@ -116,7 +90,42 @@ func CalculateStatistics(intervalsFile string, coverageBed string, panelName str
 			infos = append(infos, BedInfo{gene, info_values_arr[1], info_values_arr[2], info_values_arr[3], info_values_arr[4]})
 		}
 		c := strings.TrimPrefix(toks[0], "chr")
-		interval := BedInterval{c, s, e, infos}
+		intervals = append(intervals, BedInterval{c, s, e, infos})
+	}
+
+	PanelStats := CalculateStatistics(intervals, intervalsFile, coverageBed, panelName)
+	data, _ := json.Marshal(PanelStats)
+	fmt.Println(string(data))
+}
+
+func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverageBed string, panelName string) StatisticOutput {
+	log.Info(fmt.Sprintf("Opening file coverage bed: %q", coverageBed))
+	log.Debug(fmt.Sprintf("Using command: |tabix -R %s %s", intervalsFile, coverageBed))
+	//fmt.Sprintf("|tabix %s %s", intervalsFile, coverageBed)
+	//rdr_cov, err := xopen.Ropen("|head -n50 data/D1706395.chr_5000lines.coverage.bed")
+	var rdr_test io.Reader
+	var cmd *exec.Cmd
+	if intervalsFile == "intervals" {
+		region := fmt.Sprintf("%s:%d-%d", intervals[0].chrom, intervals[0].start, intervals[0].end)
+		log.Info(fmt.Sprintf("Using region string: %q", region))
+		cmd = exec.Command("sh", "-c", fmt.Sprintf("tabix %s %s", coverageBed, region))
+	} else {
+		cmd = exec.Command("sh", "-c", fmt.Sprintf("tabix -R %s %s", intervalsFile, coverageBed))
+	}
+	rdr_test, err := cmd.StdoutPipe()
+	err = cmd.Start()
+	check(err)
+	rdr_cov := bufio.NewReader(rdr_test)
+	//check(err)
+	//defer rdr_cov.Close()
+
+	//var intervals []BedInterval
+	var totLength int = 0
+	var TotalCoverage []float64
+	var LastInterval BedInterval
+	var PanelStats StatisticOutput
+	PanelStats.Name = panelName
+	for _, interval := range intervals {
 		totLength = totLength + interval.Size()
 		var CurrCoverage []float64
 		CurrCoverage = make([]float64, interval.Size())
