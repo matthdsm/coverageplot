@@ -38,16 +38,23 @@ func getRegionsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	var intervals []BedInterval
 	var coverageBed string
+	var intervalsFile string
+	intervalsFile = r.FormValue("intervalsFile")
 	coverageBed = r.FormValue("coverageBed")
 	regionParam := r.FormValue("region")
-	if regionParam != "" {
+
+	if regionParam != "" && intervalsFile == "" {
 		toks := strings.FieldsFunc(regionParam, SplitRegion)
 		s, _ := strconv.Atoi(toks[1])
 		e, _ := strconv.Atoi(toks[2])
 		info := []BedInfo{{"adhoc", "adhoc", "adhoc", "adhoc", "adhoc"}}
 		intervals = append(intervals, BedInterval{toks[0], s, e, info})
+		intervalsFile = "intervals"
 	}
-	regions := CalculateStatistics(intervals, "intervals", coverageBed, "adhoc")
+	if len(intervals) < 1 && intervalsFile != "" {
+		intervals = ParseRegions(intervalsFile)
+	}
+	regions := CalculateStatistics(intervals, intervalsFile, coverageBed, "adhoc")
 	j, _ := json.Marshal(regions)
 	w.Write(j)
 }

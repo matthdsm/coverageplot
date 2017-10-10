@@ -60,6 +60,15 @@ type StatisticOutput struct {
 func Statistics(intervalsFile string, coverageBed string, panelName string) {
 	//get intervals
 	var intervals []BedInterval
+	intervals = ParseRegions(intervalsFile)
+
+	PanelStats := CalculateStatistics(intervals, intervalsFile, coverageBed, panelName)
+	data, _ := json.Marshal(PanelStats)
+	fmt.Println(string(data))
+}
+
+func ParseRegions(intervalsFile string) []BedInterval {
+	var intervals []BedInterval
 	log.Info(fmt.Sprintf("Opening file intervals bed: %q", intervalsFile))
 	rdr, err := xopen.Ropen(intervalsFile)
 	check(err)
@@ -92,10 +101,7 @@ func Statistics(intervalsFile string, coverageBed string, panelName string) {
 		c := strings.TrimPrefix(toks[0], "chr")
 		intervals = append(intervals, BedInterval{c, s, e, infos})
 	}
-
-	PanelStats := CalculateStatistics(intervals, intervalsFile, coverageBed, panelName)
-	data, _ := json.Marshal(PanelStats)
-	fmt.Println(string(data))
+	return intervals
 }
 
 func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverageBed string, panelName string) StatisticOutput {
@@ -180,11 +186,14 @@ func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverage
 		PanelStats.Regions = append(PanelStats.Regions, stat)
 		if interval.chrom == LastInterval.chrom && interval.start < LastInterval.end {
 			indexCorrected := LastInterval.end - interval.start
-			TotalCoverage = append(TotalCoverage, CurrCoverage[indexCorrected:]...)
+			if indexCorrected < interval.Size() {
+				TotalCoverage = append(TotalCoverage, CurrCoverage[indexCorrected:]...)
+				LastInterval = interval
+			}
 		} else {
 			TotalCoverage = append(TotalCoverage, CurrCoverage...)
+			LastInterval = interval
 		}
-		LastInterval = interval
 	}
 	// total of all intervals
 	log.Info(fmt.Sprintf("Total selected size (in kbp): %.3f", float64(totLength)/1000))
@@ -193,7 +202,7 @@ func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverage
 	PanelStats.Total.Genome_build = "GRCh38"
 	PanelStats.Total.Start = 0
 	PanelStats.Total.End = len(TotalCoverage)
-	PanelStats.Total.Size = totLength
+	PanelStats.Total.Size = len(TotalCoverage)
 	PanelStats.Total.Quartiles, _ = stats.Quartile(TotalCoverage)
 	PanelStats.Total.Mean, _ = stats.Mean(TotalCoverage)
 	PanelStats.Total.Min, _ = stats.Min(TotalCoverage)

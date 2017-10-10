@@ -1,0 +1,181 @@
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>
+      Coverage Statistics
+    </title>
+   <link href="https://maxcdn.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet" integrity="sha384-wvfXpqpZZVQGK6TAh5PVlGOfQNHSoD2xbE+QkPxCAFlNEevoEH3Sl0sibVcOQVnN" crossorigin="anonymous">
+<link rel="stylesheet" type="text/css" href="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/4.0.0-beta/css/bootstrap.min.css"/>
+<link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.10.16/css/dataTables.bootstrap4.min.css"/>
+<link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/buttons/1.4.2/css/buttons.bootstrap4.min.css"/>
+<link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/fixedheader/3.1.3/css/fixedHeader.bootstrap4.min.css"/>
+<link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/select/1.2.3/css/select.bootstrap4.min.css"/>
+ 
+<script type="text/javascript" src="https://code.jquery.com/jquery-3.2.1.min.js"></script>
+<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/4.0.0-beta/js/bootstrap.min.js"></script>
+<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/jszip/2.5.0/jszip.min.js"></script>
+<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.32/pdfmake.min.js"></script>
+<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.32/vfs_fonts.js"></script>
+<script type="text/javascript" src="https://cdn.datatables.net/1.10.16/js/jquery.dataTables.min.js"></script>
+<script type="text/javascript" src="https://cdn.datatables.net/1.10.16/js/dataTables.bootstrap4.min.js"></script>
+<script type="text/javascript" src="https://cdn.datatables.net/buttons/1.4.2/js/dataTables.buttons.min.js"></script>
+<script type="text/javascript" src="https://cdn.datatables.net/buttons/1.4.2/js/buttons.bootstrap4.min.js"></script>
+<script type="text/javascript" src="https://cdn.datatables.net/buttons/1.4.2/js/buttons.html5.min.js"></script>
+<script type="text/javascript" src="https://cdn.datatables.net/buttons/1.4.2/js/buttons.print.min.js"></script>
+<script type="text/javascript" src="https://cdn.datatables.net/fixedheader/3.1.3/js/dataTables.fixedHeader.min.js"></script>
+<script type="text/javascript" src="https://cdn.datatables.net/select/1.2.3/js/dataTables.select.min.js"></script>
+    <script type="text/javascript">
+      $(document).ready(function() {
+        function format ( d ) {
+            // `d` is the original data object for the row
+            return '<table cellpadding="5" cellspacing="0" border="0" style="padding-left:50px;">'+
+                '<tr>'+
+                    '<td>Coverage:</td>'+
+                    '<td>'+d.Histogram+'</td>'+
+                '</tr>'+
+            '</table>';
+        }
+
+        $.getJSON( "http://localhost:8080/regions?panelName=CHD&coverageBed=data/GiB.coverage.bed.gz&intervalsFile=data/bcbio_hg38_WES_panels_per_exon/ID_and_epilepsy_hg38_v1_CCDS_transcripts_e89_cds20_per_exon_sorted.bed",
+        function( data ) {
+          //$( "<ul/>", {
+          //  "class": "region-list",
+          //  html: items.join( "" )
+          //}).appendTo( "#table" );
+          var footerInitialized = false;
+          var table = $('#example').DataTable( {
+                 data: $.map( data['Regions'], function (value, key) {
+                      value.Position = value['Chromosome']  + ":" + value['Start']+"-"+value['End']
+                      value.Median = value.Quartiles.Q2
+                      value.Transcript_ensembl = value.Transcript_ensembl.split(",")
+                      value.Transcript_refseq = value.Transcript_refseq.split(",")
+                      value.Exon_ensemble = value.Exon_ensemble.split(",")
+                      value.Rank = value.Rank.split(",")
+                      return value;
+                  } ),
+                  fixedHeader: {
+                      header: true,
+                      footer: true
+                  },
+                  columns: [
+                      {
+                        "className": 'details-control',
+                        "orderable": false,
+                        "data": null,
+                        "defaultContent": '',
+                        "render": function () {
+                            return '<i class="fa fa-plus-square" aria-hidden="true"></i>';
+                        },
+                        width:"15px"
+                      },
+                      { data: "Chromosome", "type": "html-num", className: "text-right"},
+                      { data: "Start", className: "text-right"},
+                      { data: "End", className: "text-right"},
+                      { data: "Gene" },
+                      { data: "Transcript_ensembl[, ]"},
+                      { data: "Transcript_refseq[, ]" },
+                      { data: "Exon_ensemble[, ]" },
+                      { data: "Rank[, ]" },
+                      { data: "Size", className: "text-right"},
+                      { data: "Min", className: "text-right" },
+                      { data: "Max", className: "text-right" },
+                      { data: "Mean", className: "text-right", render: $.fn.dataTable.render.number( '', ',', 2) },
+                      { data: "StdDev", className: "text-right", render: $.fn.dataTable.render.number( '', ',', 2 ) },
+                      { data: "Median", className: "text-right" },
+                      { data: "Zero_bases", className: "text-right" }
+                  ],
+                  footerCallback: function(tfoot, tdata, start, end, display) {
+                    var api = this.api();
+                    if (footerInitialized == true){ return; }
+                    api.columns('.total.float', { page: 'current' }).every(function() {
+                      title = $(this.footer()).text()
+                      var total = data['Total'][title].toFixed(2)
+                      $(this.footer()).html(total);
+                    });
+                    api.columns('.total.int', { page: 'current' }).every(function() {
+                      title = $(this.footer()).text()
+                      if(title == 'Median'){
+                        total = data.Total.Quartiles.Q2
+                      }else{
+                        total = data['Total'][title]
+                      }
+                      $(this.footer()).html(total);
+                    });
+                    footerInitialized = true;
+                  }
+          } );
+          $('#example tbody').on('click', 'td.details-control', function () {
+              var tr = $(this).closest('tr');
+              var tdi = tr.find("i.fa");
+              var row = table.row(tr);
+
+              if (row.child.isShown()) {
+                  // This row is already open - close it
+                  row.child.hide();
+                  tr.removeClass('shown');
+                  tdi.first().removeClass('fa-minus-square');
+                  tdi.first().addClass('fa-plus-square');
+              }
+              else {
+                  // Open this row
+                  row.child(format(row.data())).show();
+                  tr.addClass('shown');
+                  tdi.first().removeClass('fa-plus-square');
+                  tdi.first().addClass('fa-minus-square');
+              }
+          });
+          table.on("user-select", function (e, dt, type, cell, originalEvent) {
+            if ($(cell.node()).hasClass("details-control")) {
+                e.preventDefault();
+            }
+          });
+        });
+      });
+    </script>
+  </head>
+  <body>
+    <div id="table">
+      <table id="example" class="table" width="100%" cellspacing="0" data-page-length='50'>
+      <thead>
+        <tr>
+          <th></th>
+          <th>Chr</th>
+          <th>Start</th>
+          <th>End</th>
+          <th>Gene</th>
+          <th>Ensembl Transcript ID</th>
+          <th>RefSeq Transcript ID</th>
+          <th>Ensembl Exon ID</th>
+          <th>Rank</th>
+          <th class="total int">Size</th>
+          <th class="total int">Min</th>
+          <th class="total int">Max</th>
+          <th class="total float">Mean</th>
+          <th class="total float">StdDev</th>
+          <th class="total int">Median</th>
+          <th class="total int">Zero_bases</th>
+        </tr>
+      </thead>
+      <tfoot>
+          <tr>
+          <th></th>
+          <th></th>
+          <th></th>
+          <th></th>
+          <th></th>
+          <th colspan="4" class="text-right">Total of all regions in the gene panel:</th>
+          <th>Size</th>
+          <th>Min</th>
+          <th>Max</th>
+          <th>Mean</th>
+          <th>StdDev</th>
+          <th>Median</th>
+          <th>Zero_bases</th>
+          </tr>
+      </tfoot>
+      </table>
+    </div>
+  </body>
+</html>
