@@ -147,8 +147,12 @@ func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverage
 			}
 			start, err := strconv.Atoi(cov_toks[1])
 			rel_start := start - interval.start
+			end, err := strconv.Atoi(cov_toks[2])
+			rel_end := end - interval.end
 			count, err := strconv.ParseFloat(cov_toks[4], 64)
-			CurrCoverage[rel_start] = count
+			for i := rel_start; i < rel_end; i++ {
+				CurrCoverage[i] = count
+			}
 			if start == (interval.end - 1) {
 				break
 			}
