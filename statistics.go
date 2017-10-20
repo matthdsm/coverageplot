@@ -146,14 +146,18 @@ func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverage
 				check(err)
 			}
 			start, err := strconv.Atoi(cov_toks[1])
-			rel_start := start - interval.start
+			rel_start := max(start-interval.start, 0)
 			end, err := strconv.Atoi(cov_toks[2])
-			rel_end := end - interval.end
-			count, err := strconv.ParseFloat(cov_toks[4], 64)
+			rel_end := min(end-interval.start, interval.Size())
+			if rel_end-rel_start <= 0 {
+				log.Warn("Can't handle >1bp segment when regions too close")
+			}
+			count, err := strconv.ParseFloat(cov_toks[3], 64)
+			log.Debug(fmt.Sprintf("Adding per base segment of %d-%d, rel: %d-%d", start, end, rel_start, rel_end))
 			for i := rel_start; i < rel_end; i++ {
 				CurrCoverage[i] = count
 			}
-			if start == (interval.end - 1) {
+			if end >= interval.end {
 				break
 			}
 		}
