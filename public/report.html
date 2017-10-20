@@ -27,9 +27,30 @@
 <script type="text/javascript" src="https://cdn.datatables.net/fixedheader/3.1.3/js/dataTables.fixedHeader.min.js"></script>
 <script type="text/javascript" src="https://cdn.datatables.net/select/1.2.3/js/dataTables.select.min.js"></script>
 <script type="text/javascript" src="https://d3js.org/d3.v4.min.js"></script>
-<script type="text/javascript" src="https://omnipotent.net/jquery.sparkline/2.1.2/jquery.sparkline.min.js.gz"></script>
+<script type="text/javascript" src="js/jquery.sparkline.min.js"></script>
+
     <script type="text/javascript">
       $(document).ready(function() {
+        
+        $.getJSON( "genelists.json",
+        function( genelists ) {
+          var options = $('select#gene_panel');
+          $.each(genelists, function(key, value) {   
+               options.append($("<option></option>")
+                              .attr("value",value.file)
+                              .text(key)); 
+          });
+        } );
+
+        $('form#coverage').on('submit',function(event){
+          var params = {};
+          $.each($( this ).serializeArray(), function(i, field) {
+              params[field.name] = field.value;
+          });
+          LoadStatistics('a', params['gene_panel']);
+          event.preventDefault();
+        }) 
+
         /* function format ( row ) {
           var d = row.data();
           var el = $('#boxplot' + d.Position);
@@ -41,15 +62,18 @@
               '</tr>'+
           '</table>';
         } */
+var datatable = $('#example').DataTable();
 
-        $.getJSON( "http://localhost:8080/regions?panelName=CHD&coverageBed=data/GiB.mosdepth.exome.per-base.bed.gz&intervalsFile=data/bcbio_hg38_WES_panels_per_exon/RetNet_hg38_v2_CCDS_transcripts_e89_cds20_per_exon_sorted.bed",
+function LoadStatistics ( sample, panel ) {
+        var url = "http://localhost:8080/regions?panelName=adhoc&coverageBed=data/GiB.mosdepth.exome.per-base.bed.gz&intervalsFile=data/bcbio_hg38_WES_panels_per_exon/"+panel
+        
+        $.getJSON( url,
         function( data ) {
-          //$( "<ul/>", {
-          //  "class": "region-list",
-          //  html: items.join( "" )
-          //}).appendTo( "#table" );
+          datatable.destroy();
+          var freshfooter ='<tr><th></th><th></th><th></th><th colspan="4" class="text-right">Total of all regions in the gene panel:</th><th>Size</th><th>Min</th><th>Max</th><th>Mean</th><th>StdDev</th><th>Median</th><th>Covered</th><th class="boxplot_total"></th><th></th></tr>';
+          $('#example > tfoot').html(freshfooter);
           var footerInitialized = false;
-          var table = $('#example').DataTable( {
+          datatable = $('#example').DataTable( {
                  data: $.map( data['Regions'], function (value, key) {
                       value.Position = value['Chromosome']  + ":" + value['Start']+"-"+value['End']
                       value.Median = value.Quartiles.Q2
@@ -164,6 +188,7 @@
                 e.preventDefault();
             }
           });*/
+            $("div#graph").html('<svg width="550" height="500"></svg>')
             var svg = d3.select("svg");
           
           // Select, append to SVG, and add attributes to rectangles for bar chart
@@ -187,7 +212,7 @@
               .enter().append("text")
               .text(function(d) {
                 var percD = d/maxY *100
-                return Math.round(percD)+"%"
+                return Math.floor(percD)+"%"
               })
                      .attr("class", "text")
                      .attr("x", function(d, i) {return (i*50)+10})
@@ -204,6 +229,7 @@
                      })
                      .attr("y", 490);
         });
+}
       });
     </script>
     <style>
@@ -226,9 +252,56 @@
         fill: black;
         font-family: sans-serif
       }
+      
+      div#graph {
+        margin:2em;
+      }
+      
+      form#coverage{
+        margin: 2em;
+      }
     </style>
   </head>
   <body>
+    <div class = "container col-sm-12">
+      <form id = "coverage" method = "post" class = "form-horizontal">
+        <div id = "querypanel" class = "">
+          <div class = "panel" id = "collapse-inheritance">
+
+            <div class = "form-group">
+              <label for = "gene_panel" class = "col-sm-2 control-label">Gene panel</label>
+              <div class = "col-sm-4">
+                <select class = "form-control" name = "gene_panel" id="gene_panel">
+                  <option value"">select a gene panel</option>
+                </select>
+              </div>
+            </div>
+            
+<!--            <div class = "form-group">
+              <label for = "threshold" class = "col-sm-2 control-label">Threshold</label>
+              <div class = "col-sm-4">
+                <select class = "form-control" name = "threshold">
+                  <option value="1">10x</option>
+                  <option value="2" selected>20x</option>
+                  <option value="3">30x</option>
+                  <option value="4">40x</option>
+                  <option value="5">50x</option>
+                  <option value="6">60x</option>
+                  <option value="7">70x</option>
+                  <option value="8">80x</option>
+                  <option value="9">90x</option>
+                  <option value="10">100x</option>
+                </select>
+              </div>
+            </div> -->
+            <div>
+              <button id = "queryBtn" type = "submit" name="submit" class = "btn btn-default">load statistics</button>
+            </div>
+          </div>
+        </div>
+      </form>
+    </div>
+    <h3 class="text-center">Gene panel</h3>
     <div id="graph" class="text-center"><svg width="550" height="500"></svg></div>
     <div id="table">
       <table id="example" class="table" width="100%" cellspacing="0" data-page-length='50'>
