@@ -24,6 +24,7 @@ func main() {
 	statisticsIntervalsFlag := statisticsCommand.String("intervals", "", "Input the sorted panel bed file file.")
 	statisticsCoverageFlag := statisticsCommand.String("coverage", "", "Input the sorted coverage bed file .")
 	statisticsPanelFlag := statisticsCommand.String("panel", "", "Input a name for the panel (default: NA).")
+	statisticsTotalFlag := statisticsCommand.Bool("total", false, "Calculate only total stats")
 
 	serveCommand := flag.NewFlagSet("serve", flag.ExitOnError)
 
@@ -70,7 +71,7 @@ func main() {
 	}
 
 	if statisticsCommand.Parsed() {
-		if *statisticsIntervalsFlag == "" {
+		if *statisticsIntervalsFlag == "" && !*statisticsTotalFlag {
 			fmt.Println(os.Stderr, "Please supply a sorted panel bed file using -intervals option.")
 			os.Exit(2)
 		}
@@ -81,8 +82,8 @@ func main() {
 		if *statisticsPanelFlag == "" {
 			*statisticsPanelFlag = "NA"
 		}
-		log.Info(fmt.Sprintf("Analysing file %q using intervals %q", *statisticsCoverageFlag, *statisticsIntervalsFlag))
-		coverage.Statistics(*statisticsIntervalsFlag, *statisticsCoverageFlag, *statisticsPanelFlag)
+		log.Info(fmt.Sprintf("Analysing file %q using intervals %q, total: %v", *statisticsCoverageFlag, *statisticsIntervalsFlag, *statisticsTotalFlag))
+		coverage.Statistics(*statisticsIntervalsFlag, *statisticsCoverageFlag, *statisticsPanelFlag, *statisticsTotalFlag)
 	}
 
 	if analyseCommand.Parsed() {
