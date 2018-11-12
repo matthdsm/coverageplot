@@ -60,12 +60,12 @@ type StatisticOutput struct {
 func Statistics(intervalsFile string, coverageBed string, panelName string, total bool) {
 	var intervals []BedInterval
 	var data []byte
-	if total {
+	if total && intervalsFile == "" {
 		PanelStats := CalculateTotalStatistics(coverageBed, panelName)
 		data, _ = json.Marshal(PanelStats)
 	} else {
 		intervals = ParseRegions(intervalsFile)
-		PanelStats := CalculateStatistics(intervals, intervalsFile, coverageBed, panelName)
+		PanelStats := CalculateStatistics(intervals, intervalsFile, coverageBed, panelName, total)
 		data, _ = json.Marshal(PanelStats)
 	}
 	fmt.Println(string(data))
@@ -100,7 +100,11 @@ func ParseRegions(intervalsFile string) []BedInterval {
 			if i == 0 {
 				gene = info_values_arr[0]
 			}
-			infos = append(infos, BedInfo{gene, info_values_arr[1], info_values_arr[2], info_values_arr[3], info_values_arr[4]})
+			if len(info_values_arr) > 3 {
+				infos = append(infos, BedInfo{gene, info_values_arr[1], info_values_arr[2], info_values_arr[3], info_values_arr[4]})
+			} else {
+				infos = append(infos, BedInfo{info_values_arr[0], "NA", "NA", "NA", "NA"})
+			}
 		}
 		c := strings.TrimPrefix(toks[0], "chr")
 		intervals = append(intervals, BedInterval{c, s, e, infos})
@@ -108,7 +112,7 @@ func ParseRegions(intervalsFile string) []BedInterval {
 	return intervals
 }
 
-func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverageBed string, panelName string) StatisticOutput {
+func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverageBed string, panelName string, total bool) StatisticOutput {
 	log.Info(fmt.Sprintf("Opening file coverage bed: %q", coverageBed))
 	log.Debug(fmt.Sprintf("Using command: |tabix -R %s %s", intervalsFile, coverageBed))
 	//fmt.Sprintf("|tabix %s %s", intervalsFile, coverageBed)
@@ -121,6 +125,10 @@ func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverage
 		cmd = exec.Command("sh", "-c", fmt.Sprintf("tabix %s %s", coverageBed, region))
 	} else {
 		cmd = exec.Command("sh", "-c", fmt.Sprintf("tabix -R %s %s", intervalsFile, coverageBed))
+	}
+
+	if total {
+		log.Info("Only calculating totals.")
 	}
 	rdr_test, err := cmd.StdoutPipe()
 	err = cmd.Start()
@@ -139,6 +147,9 @@ func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverage
 		totLength = totLength + interval.Size()
 		var CurrCoverage []float64
 		CurrCoverage = make([]float64, interval.Size())
+		for i := 0; i < interval.Size(); i++ {
+			CurrCoverage[i] = 0
+		}
 		log.Debug(fmt.Sprintf("Create coverage for %dbp region", interval.Size()))
 		for {
 			cov_line, err := rdr_cov.ReadString(byte('\n'))
@@ -153,11 +164,15 @@ func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverage
 			rel_start := max(start-interval.start, 0)
 			end, err := strconv.Atoi(cov_toks[2])
 			rel_end := min(end-interval.start, interval.Size())
-			if rel_end-rel_start <= 0 {
-				log.Warn("Can't handle >1bp segment when regions too close")
+			if rel_end-rel_start < 0 {
+				log.Debug(fmt.Sprintf("skip base no overlap found for %d-%d, rel: %d-%d", start, end, rel_start, rel_end))
+				continue
 			}
 			count, err := strconv.ParseFloat(cov_toks[3], 64)
 			log.Debug(fmt.Sprintf("Adding per base segment of %d-%d, rel: %d-%d", start, end, rel_start, rel_end))
+			if count == 0 {
+				log.Warn(fmt.Sprintf("Zero coverage for %d bases, %s:%d-%d", rel_end-rel_start, interval.chrom, start, end))
+			}
 			for i := rel_start; i < rel_end; i++ {
 				CurrCoverage[i] = count
 			}
@@ -165,40 +180,42 @@ func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverage
 				break
 			}
 		}
-		var stat Statistic
-		stat.Gene_panel = panelName
-		stat.Genome_build = "GRCh38"
-		stat.Chromosome = interval.chrom
-		stat.Coverage = CurrCoverage
-		stat.Start = interval.start
-		stat.End = interval.end
-		stat.Gene = interval.info[0].Gene
-		stat.Transcript_ensembl = interval.info[0].TranscriptId
-		stat.Transcript_refseq = interval.info[0].RefSeqId
-		stat.Exon_ensemble = interval.info[0].ExonId
-		stat.Rank = interval.info[0].Rank
-		stat.Size = interval.Size()
-		stat.Quartiles, _ = stats.Quartile(CurrCoverage)
-		stat.Mean, _ = stats.Mean(CurrCoverage)
-		stat.Min, _ = stats.Min(CurrCoverage)
-		stat.Max, _ = stats.Max(CurrCoverage)
-		stat.StdDev, _ = stats.StandardDeviation(CurrCoverage)
-		var histo Histogram
-		histo.init([]float64{0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100})
-		histo.AddAll(CurrCoverage)
-		stat.CummulativeHistogram = histo.BucketsCumm
-		stat.Histogram = histo.Buckets
-		stat.Zero_bases = stat.Histogram[0]
-		if stat.Zero_bases > 0 {
-			log.Warn(fmt.Sprintf("Zero coverage for %d bases, exon %s, %s:%d-%d", stat.Zero_bases, stat.Exon_ensemble, stat.Chromosome, stat.Start, stat.End))
-		}
+		if !total {
+			var stat Statistic
+			stat.Gene_panel = panelName
+			stat.Genome_build = "GRCh38"
+			stat.Chromosome = interval.chrom
+			stat.Coverage = CurrCoverage
+			stat.Start = interval.start
+			stat.End = interval.end
+			stat.Gene = interval.info[0].Gene
+			stat.Transcript_ensembl = interval.info[0].TranscriptId
+			stat.Transcript_refseq = interval.info[0].RefSeqId
+			stat.Exon_ensemble = interval.info[0].ExonId
+			stat.Rank = interval.info[0].Rank
+			stat.Size = interval.Size()
+			stat.Quartiles, _ = stats.Quartile(CurrCoverage)
+			stat.Mean, _ = stats.Mean(CurrCoverage)
+			stat.Min, _ = stats.Min(CurrCoverage)
+			stat.Max, _ = stats.Max(CurrCoverage)
+			stat.StdDev, _ = stats.StandardDeviation(CurrCoverage)
+			var histo Histogram
+			histo.init([]float64{0, 1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100})
+			histo.AddAll(CurrCoverage)
+			stat.CummulativeHistogram = histo.BucketsCumm
+			stat.Histogram = histo.Buckets
+			stat.Zero_bases = stat.Histogram[0]
+			if stat.Zero_bases > 0 {
+				log.Warn(fmt.Sprintf("Zero coverage for %d bases, exon %s, %s:%d-%d", stat.Zero_bases, stat.Exon_ensemble, stat.Chromosome, stat.Start, stat.End))
+			}
 
-		// my @my_header = ("Gene_panel","Genome_build","Chromosome", "start", "end", "Gene", "Transcripts_ensembl", "Transcripts_refseq", "Exon_ensemble", "Rank", "Target_region_length", "Min_coverage", "Max_coverage", "Mean_coverage", "Median_coverage", "Zero_coverage_bases", "Proportion_covered","Target_region_length_with_coverage_above_20", "Percentage_with_coverage_above_20", "Target_region_length_with_coverage_above_30","Percentage_with_coverage_above_30"); # to output
-		log.Debug(fmt.Sprintf("Stats: %v", stat))
-		PanelStats.Regions = append(PanelStats.Regions, stat)
+			// my @my_header = ("Gene_panel","Genome_build","Chromosome", "start", "end", "Gene", "Transcripts_ensembl", "Transcripts_refseq", "Exon_ensemble", "Rank", "Target_region_length", "Min_coverage", "Max_coverage", "Mean_coverage", "Median_coverage", "Zero_coverage_bases", "Proportion_covered","Target_region_length_with_coverage_above_20", "Percentage_with_coverage_above_20", "Target_region_length_with_coverage_above_30","Percentage_with_coverage_above_30"); # to output
+			log.Debug(fmt.Sprintf("Stats: %v", stat))
+			PanelStats.Regions = append(PanelStats.Regions, stat)
+		}
 		if interval.chrom == LastInterval.chrom && interval.start < LastInterval.end {
 			indexCorrected := LastInterval.end - interval.start
-			if indexCorrected < interval.Size() {
+			if indexCorrected > 0 {
 				TotalCoverage = append(TotalCoverage, CurrCoverage[indexCorrected:]...)
 				LastInterval = interval
 			}
@@ -221,11 +238,14 @@ func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverage
 	PanelStats.Total.Max, _ = stats.Max(TotalCoverage)
 	PanelStats.Total.StdDev, _ = stats.StandardDeviation(TotalCoverage)
 	var totalHisto Histogram
-	totalHisto.init([]float64{0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100})
+	totalHisto.init([]float64{0, 1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100})
 	totalHisto.AddAll(TotalCoverage)
 	PanelStats.Total.CummulativeHistogram = totalHisto.BucketsCumm
 	PanelStats.Total.Histogram = totalHisto.Buckets
 	PanelStats.Total.Zero_bases = PanelStats.Total.Histogram[0]
+	//if total {
+	// PanelStats.Total.Coverage = TotalCoverage
+	//}
 	log.Debug(fmt.Sprintf("Total Stats: %v", PanelStats.Total))
 
 	return PanelStats
@@ -266,7 +286,7 @@ func CalculateTotalStatistics(coverageBed string, panelName string) Statistic {
 	Stats.Max, _ = stats.Max(Coverage)
 	Stats.StdDev, _ = stats.StandardDeviation(Coverage)
 	var totalHisto Histogram
-	totalHisto.init([]float64{0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100})
+	totalHisto.init([]float64{0, 1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100})
 	totalHisto.AddAll(Coverage)
 	Stats.CummulativeHistogram = totalHisto.BucketsCumm
 	Stats.Histogram = totalHisto.Buckets
