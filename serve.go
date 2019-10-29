@@ -54,7 +54,7 @@ func getRegionsHandler(w http.ResponseWriter, r *http.Request) {
 	if len(intervals) < 1 && intervalsFile != "" {
 		intervals = ParseRegions(intervalsFile)
 	}
-	regions := CalculateStatistics(intervals, intervalsFile, coverageBed, "adhoc")
+	regions := CalculateStatistics(intervals, intervalsFile, coverageBed, "adhoc", false)
 	j, _ := json.Marshal(regions)
 	w.Write(j)
 }

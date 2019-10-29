@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"github.com/bmizerany/perks/quantile"
 	"github.com/brentp/xopen"
 	"github.com/montanaflynn/stats"
 	log "github.com/sirupsen/logrus"
@@ -103,7 +104,7 @@ func ParseRegions(intervalsFile string) []BedInterval {
 			if len(info_values_arr) > 3 {
 				infos = append(infos, BedInfo{gene, info_values_arr[1], info_values_arr[2], info_values_arr[3], info_values_arr[4]})
 			} else {
-				infos = append(infos, BedInfo{info_values_arr[0], "NA", "NA", "NA", "NA"})
+				infos = append(infos, BedInfo{info_values_arr[0], "", "", "", ""})
 			}
 		}
 		c := strings.TrimPrefix(toks[0], "chr")
@@ -142,6 +143,8 @@ func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverage
 	var TotalCoverage []float64
 	var LastInterval BedInterval
 	var PanelStats StatisticOutput
+	var totalHisto Histogram
+	totalHisto.init([]float64{0, 1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100})
 	PanelStats.Name = panelName
 	for _, interval := range intervals {
 		totLength = totLength + interval.Size()
@@ -171,7 +174,7 @@ func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverage
 			count, err := strconv.ParseFloat(cov_toks[3], 64)
 			log.Debug(fmt.Sprintf("Adding per base segment of %d-%d, rel: %d-%d", start, end, rel_start, rel_end))
 			if count == 0 {
-				log.Warn(fmt.Sprintf("Zero coverage for %d bases, %s:%d-%d", rel_end-rel_start, interval.chrom, start, end))
+				log.Debug(fmt.Sprintf("Zero coverage for %d bases, %s:%d-%d", rel_end-rel_start, interval.chrom, start, end))
 			}
 			for i := rel_start; i < rel_end; i++ {
 				CurrCoverage[i] = count
@@ -206,7 +209,7 @@ func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverage
 			stat.Histogram = histo.Buckets
 			stat.Zero_bases = stat.Histogram[0]
 			if stat.Zero_bases > 0 {
-				log.Warn(fmt.Sprintf("Zero coverage for %d bases, exon %s, %s:%d-%d", stat.Zero_bases, stat.Exon_ensemble, stat.Chromosome, stat.Start, stat.End))
+				log.Debug(fmt.Sprintf("Zero coverage for %d bases, exon %s, %s:%d-%d", stat.Zero_bases, stat.Exon_ensemble, stat.Chromosome, stat.Start, stat.End))
 			}
 
 			// my @my_header = ("Gene_panel","Genome_build","Chromosome", "start", "end", "Gene", "Transcripts_ensembl", "Transcripts_refseq", "Exon_ensemble", "Rank", "Target_region_length", "Min_coverage", "Max_coverage", "Mean_coverage", "Median_coverage", "Zero_coverage_bases", "Proportion_covered","Target_region_length_with_coverage_above_20", "Percentage_with_coverage_above_20", "Target_region_length_with_coverage_above_30","Percentage_with_coverage_above_30"); # to output
@@ -215,13 +218,19 @@ func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverage
 		}
 		if interval.chrom == LastInterval.chrom && interval.start < LastInterval.end {
 			indexCorrected := LastInterval.end - interval.start
+			if indexCorrected > interval.Size() {
+				log.Debug(fmt.Sprintf("Interval fully contained in previous interval: %d-%d,%d-%d;", interval.start, interval.end, LastInterval.start, LastInterval.end))
+				continue
+			}
 			if indexCorrected > 0 {
 				TotalCoverage = append(TotalCoverage, CurrCoverage[indexCorrected:]...)
 				LastInterval = interval
+				totalHisto.AddAll(CurrCoverage[indexCorrected:])
 			}
 		} else {
 			TotalCoverage = append(TotalCoverage, CurrCoverage...)
 			LastInterval = interval
+			totalHisto.AddAll(CurrCoverage)
 		}
 	}
 	// total of all intervals
@@ -237,9 +246,6 @@ func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverage
 	PanelStats.Total.Min, _ = stats.Min(TotalCoverage)
 	PanelStats.Total.Max, _ = stats.Max(TotalCoverage)
 	PanelStats.Total.StdDev, _ = stats.StandardDeviation(TotalCoverage)
-	var totalHisto Histogram
-	totalHisto.init([]float64{0, 1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100})
-	totalHisto.AddAll(TotalCoverage)
 	PanelStats.Total.CummulativeHistogram = totalHisto.BucketsCumm
 	PanelStats.Total.Histogram = totalHisto.Buckets
 	PanelStats.Total.Zero_bases = PanelStats.Total.Histogram[0]
@@ -251,16 +257,23 @@ func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverage
 	return PanelStats
 }
 
-func CalculateTotalStatistics(coverageBed string, panelName string) Statistic {
+func CalculateTotalStatistics(coverageBed string, panelName string) StatisticOutput {
 	log.Info(fmt.Sprintf("Opening file coverage bed: %q", coverageBed))
 	rdr, err := xopen.Ropen(coverageBed)
 	check(err)
 	defer rdr.Close()
-	var Stats Statistic
-	var Coverage []float64
+	var ReturnStats Statistic
+	var TotalStats StatisticOutput
+	var RunningStats Stats
+	RunningStats.Reset()
+	q := quantile.NewTargeted(0.25, 0.50, 0.75)
+	TotalStats.Name = panelName
+	var totalHisto Histogram
+	totalHisto.init([]float64{0, 1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100})
 	for {
 		cov_line, err := rdr.ReadString(byte('\n'))
 		cov_toks := strings.Split(strings.TrimSuffix(cov_line, "\n"), "\t")
+
 		if err == io.EOF {
 			log.Debug("Break EOF")
 			break
@@ -270,29 +283,32 @@ func CalculateTotalStatistics(coverageBed string, panelName string) Statistic {
 		start, err := strconv.Atoi(cov_toks[1])
 		end, err := strconv.Atoi(cov_toks[2])
 		count, err := strconv.ParseFloat(cov_toks[3], 64)
-		log.Debug(fmt.Sprintf("Adding per base segment of %d-%d, count: %d", start, end, count))
+		//log.Debug(fmt.Sprintf("Adding per base segment of %d-%d, count: %d", start, end, count))
 		for i := 0; i < (end - start); i++ {
-			Coverage = append(Coverage, count)
+			//Coverage = append(Coverage, count)
+			totalHisto.Add(count)
+			RunningStats.Add(count)
+			q.Insert(count)
 		}
 	}
-	Stats.Gene_panel = panelName
-	Stats.Genome_build = "GRCh38"
-	Stats.Start = 0
-	Stats.End = len(Coverage)
-	Stats.Size = len(Coverage)
-	Stats.Quartiles, _ = stats.Quartile(Coverage)
-	Stats.Mean, _ = stats.Mean(Coverage)
-	Stats.Min, _ = stats.Min(Coverage)
-	Stats.Max, _ = stats.Max(Coverage)
-	Stats.StdDev, _ = stats.StandardDeviation(Coverage)
-	var totalHisto Histogram
-	totalHisto.init([]float64{0, 1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100})
-	totalHisto.AddAll(Coverage)
-	Stats.CummulativeHistogram = totalHisto.BucketsCumm
-	Stats.Histogram = totalHisto.Buckets
-	Stats.Zero_bases = Stats.Histogram[0]
-
-	return Stats
+	ReturnStats.Gene_panel = panelName
+	ReturnStats.Genome_build = "GRCh38"
+	ReturnStats.Start = 0
+	ReturnStats.End = int(RunningStats.Count())
+	ReturnStats.Size = int(RunningStats.Count())
+	//Stats.Quartiles, _ = stats.Quartile(Coverage)
+	ReturnStats.Mean = RunningStats.Mean()
+	ReturnStats.Min = RunningStats.Min()
+	ReturnStats.Max = RunningStats.Max()
+	ReturnStats.StdDev = RunningStats.Stddev()
+	ReturnStats.Quartiles = stats.Quartiles{q.Query(0.25), q.Query(0.50), q.Query(0.75)}
+	ReturnStats.CummulativeHistogram = totalHisto.BucketsCumm
+	ReturnStats.Histogram = totalHisto.Buckets
+	ReturnStats.Zero_bases = ReturnStats.Histogram[0]
+	log.Debug(fmt.Sprintf("RunningStats %v", RunningStats))
+	log.Debug(fmt.Sprintf("Results of region of size %d with mean coverage of %d (stddev: %d)", ReturnStats.Max, ReturnStats.Mean, ReturnStats.StdDev))
+	TotalStats.Total = ReturnStats
+	return TotalStats
 }
 
 func (i BedInterval) Size() int {

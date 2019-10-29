@@ -8,6 +8,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	//"github.com/pkg/profile"
 	log "github.com/sirupsen/logrus"
 	coverage "gitlab.cmgg.be/cmgg/coverageplot"
 	"os"
@@ -15,6 +16,8 @@ import (
 )
 
 func main() {
+	//defer profile.Start(profile.MemProfile).Stop()
+
 	analyseCommand := flag.NewFlagSet("analyse", flag.ExitOnError)
 	analyseIntervalsFlag := analyseCommand.String("intervals", "", "Input the sorted and merged interval file.")
 	bamFlag := analyseCommand.String("bam", "", "Input bam file, a sorted and indexed file is required.")
