@@ -164,22 +164,23 @@ func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverage
 				check(err)
 			}
 			start, err := strconv.Atoi(cov_toks[1])
-			rel_start := max(start-interval.start, 0)
 			end, err := strconv.Atoi(cov_toks[2])
-			rel_end := min(end-interval.start, interval.Size())
-			if rel_end-rel_start < 0 {
-				log.Debug(fmt.Sprintf("skip base no overlap found for %d-%d, rel: %d-%d", start, end, rel_start, rel_end))
-				continue
+			coverage, err := strconv.ParseFloat(cov_toks[3], 64)
+			if coverage == 0 {
+				log.Debug(fmt.Sprintf("Zero coverage for %d bases, %s:%d-%d", end-start, interval.chrom, start, end))
 			}
-			count, err := strconv.ParseFloat(cov_toks[3], 64)
-			log.Debug(fmt.Sprintf("Adding per base segment of %d-%d, rel: %d-%d", start, end, rel_start, rel_end))
-			if count == 0 {
-				log.Debug(fmt.Sprintf("Zero coverage for %d bases, %s:%d-%d", rel_end-rel_start, interval.chrom, start, end))
+			// Map to array indices correctly
+			log.Debug(fmt.Sprintf("Adding per base segment of %d-%d starting at %d", start, end, start-interval.start ))
+			for i := start; i < end; i++ {
+				idx := i - interval.start
+				if idx >= 0 && idx < len(CurrCoverage) {
+					CurrCoverage[idx] = coverage
+				} else {
+					log.Debug(fmt.Sprintf("Position %d (idx: %d) out of bounds for interval %s:%d-%d (size: %d)", 
+						i, idx, interval.chrom, interval.start, interval.end, len(CurrCoverage)))
+				}
 			}
-			for i := rel_start; i < rel_end; i++ {
-				CurrCoverage[i] = count
-			}
-			if end >= interval.end {
+			if end > interval.end {
 				break
 			}
 		}
