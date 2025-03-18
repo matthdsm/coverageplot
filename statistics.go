@@ -4,15 +4,18 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"github.com/bmizerany/perks/quantile"
-	"github.com/brentp/xopen"
-	"github.com/montanaflynn/stats"
-	log "github.com/sirupsen/logrus"
 	"io"
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/bmizerany/perks/quantile"
+	"github.com/brentp/xopen"
+	"github.com/montanaflynn/stats"
+	log "github.com/sirupsen/logrus"
 )
+
+var execCommand = exec.Command
 
 type BedInfo struct { // NCF1;NM_000265.5;ENST00000289473;ENSE00003510291;8
 	Gene         string
@@ -74,7 +77,7 @@ func Statistics(intervalsFile string, coverageBed string, panelName string, tota
 
 func ParseRegions(intervalsFile string) []BedInterval {
 	var intervals []BedInterval
-	log.Info(fmt.Sprintf("Opening file intervals bed: %q", intervalsFile))
+	log.Debug(fmt.Sprintf("Opening file intervals bed: %q", intervalsFile))
 	rdr, err := xopen.Ropen(intervalsFile)
 	check(err)
 	defer rdr.Close()
@@ -114,8 +117,16 @@ func ParseRegions(intervalsFile string) []BedInterval {
 }
 
 func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverageBed string, panelName string, total bool) StatisticOutput {
-	log.Info(fmt.Sprintf("Opening file coverage bed: %q", coverageBed))
+	log.Debug(fmt.Sprintf("Opening file coverage bed: %q", coverageBed))
 	log.Debug(fmt.Sprintf("Using command: |tabix -R %s %s", intervalsFile, coverageBed))
+	if len(intervals) == 0 {
+		var PanelStats StatisticOutput
+		PanelStats.Name = panelName
+		PanelStats.Total.Gene_panel = panelName
+		PanelStats.Total.Genome_build = "GRCh38"
+		// Set other default values if needed
+		return PanelStats
+	}
 	//fmt.Sprintf("|tabix %s %s", intervalsFile, coverageBed)
 	//rdr_cov, err := xopen.Ropen("|head -n50 data/D1706395.chr_5000lines.coverage.bed")
 	var rdr_test io.Reader
@@ -123,9 +134,9 @@ func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverage
 	if intervalsFile == "intervals" {
 		region := fmt.Sprintf("%s:%d-%d", intervals[0].chrom, intervals[0].start, intervals[0].end)
 		log.Info(fmt.Sprintf("Using region string: %q", region))
-		cmd = exec.Command("sh", "-c", fmt.Sprintf("tabix %s %s", coverageBed, region))
+		cmd = execCommand("sh", "-c", fmt.Sprintf("tabix %s %s", coverageBed, region))
 	} else {
-		cmd = exec.Command("sh", "-c", fmt.Sprintf("tabix -R %s %s", intervalsFile, coverageBed))
+		cmd = execCommand("sh", "-c", fmt.Sprintf("tabix -R %s %s", intervalsFile, coverageBed))
 	}
 
 	if total {
@@ -149,11 +160,13 @@ func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverage
 	for _, interval := range intervals {
 		totLength = totLength + interval.Size()
 		var CurrCoverage []float64
-		CurrCoverage = make([]float64, interval.Size())
-		for i := 0; i < interval.Size(); i++ {
-			CurrCoverage[i] = 0
-		}
+		CurrCoverage = make([]float64, interval.Size()) // Automatically initialized to 0
 		log.Debug(fmt.Sprintf("Create coverage for %dbp region", interval.Size()))
+		log.Debug(fmt.Sprintf("Starting loop for interval %s:%d-%d",
+			interval.chrom, interval.start, interval.end))
+
+		// Add a flag to track first iteration
+		isFirstSegment := true
 		for {
 			cov_line, err := rdr_cov.ReadString(byte('\n'))
 			cov_toks := strings.Split(strings.TrimSuffix(cov_line, "\n"), "\t")
@@ -165,22 +178,42 @@ func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverage
 			}
 			start, err := strconv.Atoi(cov_toks[1])
 			end, err := strconv.Atoi(cov_toks[2])
+
+			// Only check this condition on the first iteration of the loop
+			// This is to handle the case where the first segment of the interval
+			// is a tailing segment of the previous interval
+			// tabix -R considers intervals 1-based and inclusive
+			// but our intervals are 0-based and exclusive
+			if isFirstSegment && (interval.start < start || interval.start >= end) {
+				log.Debug(fmt.Sprintf("Skipping tailing segment %d-%d from previous interval",
+					start, end))
+				continue
+			}
+
+			// We're no longer in the first iteration
+			isFirstSegment = false
+
 			coverage, err := strconv.ParseFloat(cov_toks[3], 64)
 			if coverage == 0 {
 				log.Debug(fmt.Sprintf("Zero coverage for %d bases, %s:%d-%d", end-start, interval.chrom, start, end))
 			}
 			// Map to array indices correctly
-			log.Debug(fmt.Sprintf("Adding per base segment of %d-%d starting at %d", start, end, start-interval.start ))
-			for i := start; i < end; i++ {
+			log.Debug(fmt.Sprintf("Adding per base segment of %d-%d starting at %d", start, end, start-interval.start))
+
+			start0 := start
+			end0 := end
+			for i := start0; i < end0; i++ {
 				idx := i - interval.start
 				if idx >= 0 && idx < len(CurrCoverage) {
 					CurrCoverage[idx] = coverage
 				} else {
-					log.Debug(fmt.Sprintf("Position %d (idx: %d) out of bounds for interval %s:%d-%d (size: %d)", 
+					log.Debug(fmt.Sprintf("Position %d (idx: %d) out of bounds for interval %s:%d-%d (size: %d)",
 						i, idx, interval.chrom, interval.start, interval.end, len(CurrCoverage)))
 				}
 			}
-			if end > interval.end {
+			if end >= interval.end {
+				log.Debug(fmt.Sprintf("Breaking out of loop for segment %d-%d interval %s:%d-%d",
+					start, end, interval.chrom, interval.start, interval.end))
 				break
 			}
 		}
@@ -235,7 +268,7 @@ func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverage
 		}
 	}
 	// total of all intervals
-	log.Info(fmt.Sprintf("Total selected size (in kbp): %.3f", float64(totLength)/1000))
+	log.Debug(fmt.Sprintf("Total selected size (in kbp): %.3f", float64(totLength)/1000))
 	//var totalStat Statistic
 	PanelStats.Total.Gene_panel = panelName
 	PanelStats.Total.Genome_build = "GRCh38"
@@ -259,7 +292,7 @@ func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverage
 }
 
 func CalculateTotalStatistics(coverageBed string, panelName string) StatisticOutput {
-	log.Info(fmt.Sprintf("Opening file coverage bed: %q", coverageBed))
+	log.Debug(fmt.Sprintf("Opening file coverage bed: %q", coverageBed))
 	rdr, err := xopen.Ropen(coverageBed)
 	check(err)
 	defer rdr.Close()
@@ -307,7 +340,7 @@ func CalculateTotalStatistics(coverageBed string, panelName string) StatisticOut
 	ReturnStats.Histogram = totalHisto.Buckets
 	ReturnStats.Zero_bases = ReturnStats.Histogram[0]
 	log.Debug(fmt.Sprintf("RunningStats %v", RunningStats))
-	log.Debug(fmt.Sprintf("Results of region of size %d with mean coverage of %d (stddev: %d)", ReturnStats.Max, ReturnStats.Mean, ReturnStats.StdDev))
+	log.Debug(fmt.Sprintf("Results of region of size %.2f with mean coverage of %.2f (stddev: %.2f)", ReturnStats.Max, ReturnStats.Mean, ReturnStats.StdDev))
 	TotalStats.Total = ReturnStats
 	return TotalStats
 }
