@@ -1,58 +1,67 @@
 package coverageplot
 
 import (
-	"fmt"
-	log "github.com/sirupsen/logrus"
+	"log/slog"
 )
 
+// Histogram maintains discrete and cumulative bucket counts for observed values.
 type Histogram struct {
-	sum          float64 // running total of measurements
-	Buckets      []int   // bucketed values for histogram
+	sum          float64
+	Buckets      []int
 	BucketsCumm  []int
 	bucketLabels []float64
-	valueCount   int // number of values recorded for single value
+	valueCount   int
 	bucketCount  int
 }
 
+// NewHistogram creates and initializes a Histogram with bucket thresholds.
+func NewHistogram(bucketLabels []float64) *Histogram {
+	h := &Histogram{}
+	h.init(bucketLabels)
+	return h
+}
+
 func (h *Histogram) init(bucketLabels []float64) {
-	//h.bucketLabels = make([]float64, len(bucketLabels))
-	//for i, v := range bucketLabels {
-	//	h.bucketLabels[i] = float64(v)
-	//}
-	log.Debug(fmt.Sprintf("Histogram with labels: %v", bucketLabels))
+	slog.Debug("Initializing histogram", "labels", bucketLabels)
 	h.bucketLabels = bucketLabels
 	h.bucketCount = len(bucketLabels)
 	h.Buckets = make([]int, h.bucketCount)
 	h.BucketsCumm = make([]int, h.bucketCount)
 }
 
-func (h *Histogram) Add(value float64) {
-	h.sum += value
+// AddCount records multiple occurrences of a float64 measurement into the histogram.
+func (h *Histogram) AddCount(value float64, count int) {
+	if count <= 0 {
+		return
+	}
+	h.sum += value * float64(count)
 	bucketIndex := h.getBucket(value)
-	h.valueCount++
-	h.Buckets[bucketIndex]++
+	h.valueCount += count
+	h.Buckets[bucketIndex] += count
 	for i := 0; i <= bucketIndex; i++ {
-		h.BucketsCumm[i]++
+		h.BucketsCumm[i] += count
 	}
 }
 
+// Add records a single float64 measurement into the histogram.
+func (h *Histogram) Add(value float64) {
+	h.AddCount(value, 1)
+}
+
+// AddAll records multiple float64 measurements into the histogram.
 func (h *Histogram) AddAll(values []float64) {
 	for _, v := range values {
 		h.Add(v)
 	}
 }
 
-func (h *Histogram) getBucket(i float64) int {
-	for index, value := range h.bucketLabels {
-		if i >= value {
-			continue
-		} else {
-			if index == 0 {
+func (h *Histogram) getBucket(val float64) int {
+	for idx, bound := range h.bucketLabels {
+		if val < bound {
+			if idx == 0 {
 				return 0
-			} else {
-				return index - 1
 			}
-
+			return idx - 1
 		}
 	}
 	return h.bucketCount - 1

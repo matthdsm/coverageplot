@@ -1,20 +1,16 @@
 package coverageplot
 
-// Package stats implements Welford's one-pass algorithm for computing
-// the mean and variance of a set of numbers. For more information see
-// Knuth (TAOCP Vol 2, 3rd ed, pg 232).
-
 import (
 	"math"
 )
 
-// A Stats gathers statistics on values fed into it.
+// Stats gathers running statistics on values fed into it using Welford's algorithm.
 type Stats struct {
 	count             uint64
 	min, max, mean, s float64
 }
 
-// New returns a new Stats.
+// New returns a new Stats instance.
 func New() *Stats {
 	return &Stats{}
 }
@@ -39,7 +35,7 @@ func (s *Stats) Mean() float64 {
 	return s.mean
 }
 
-// Variance returns the variance of all values seen.
+// Variance returns the sample variance of all values seen.
 func (s *Stats) Variance() float64 {
 	if s.count > 1 {
 		return s.s / float64(s.count-1)
@@ -47,7 +43,7 @@ func (s *Stats) Variance() float64 {
 	return 0.0
 }
 
-// Stddev returns the standard deviation of all values seen.
+// Stddev returns the sample standard deviation of all values seen.
 func (s *Stats) Stddev() float64 {
 	return math.Sqrt(s.Variance())
 }
@@ -61,21 +57,33 @@ func (s *Stats) Reset() {
 	s.s = 0.0
 }
 
-// Add feeds a new value into the Stats.
-func (s *Stats) Add(val float64) {
+// AddCount feeds n occurrences of a value into Stats in O(1) time using Chan-Golub-LeVeque merging.
+func (s *Stats) AddCount(val float64, n uint64) {
+	if n == 0 {
+		return
+	}
 	if s.count == 0 {
 		s.min = val
 		s.max = val
-	} else {
-		if val < s.min {
-			s.min = val
-		}
-		if val > s.max {
-			s.max = val
-		}
+		s.mean = val
+		s.s = 0.0
+		s.count = n
+		return
 	}
-	s.count++
-	old_mean := s.mean
-	s.mean += (val - old_mean) / float64(s.count)
-	s.s += (val - old_mean) * (val - s.mean)
+	if val < s.min {
+		s.min = val
+	}
+	if val > s.max {
+		s.max = val
+	}
+	delta := val - s.mean
+	newCount := s.count + n
+	s.mean += delta * (float64(n) / float64(newCount))
+	s.s += delta * delta * (float64(s.count) * float64(n) / float64(newCount))
+	s.count = newCount
+}
+
+// Add feeds a single value into the Stats.
+func (s *Stats) Add(val float64) {
+	s.AddCount(val, 1)
 }
