@@ -27,7 +27,7 @@ func TestStatsCalculations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StandardDeviation error: %v", err)
 	}
-	expectedStd := math.Sqrt(250.0) // variances: sum((x-30)^2)/(5-1) = (400+100+0+100+400)/4 = 1000/4 = 250
+	expectedStd := math.Sqrt(200.0) // population variance: sum((x-30)^2)/5 = (400+100+0+100+400)/5 = 1000/5 = 200
 	if math.Abs(stdVal-expectedStd) > 1e-6 {
 		t.Fatalf("StandardDeviation: expected %v, got %v", expectedStd, stdVal)
 	}
@@ -56,9 +56,8 @@ func TestStatsEmpty(t *testing.T) {
 	if _, err := Mean(empty); err == nil {
 		t.Fatal("expected error on Mean(empty)")
 	}
-	std, err := StandardDeviation(empty)
-	if err != nil || std != 0 {
-		t.Fatalf("expected 0 for StandardDeviation(empty), got %v (err: %v)", std, err)
+	if _, err := StandardDeviation(empty); err == nil {
+		t.Fatal("expected error on StandardDeviation(empty)")
 	}
 	if _, err := Quartile(empty); err == nil {
 		t.Fatal("expected error on Quartile(empty)")

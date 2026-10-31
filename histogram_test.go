@@ -25,13 +25,8 @@ func TestHistogram(t *testing.T) {
 		t.Fatalf("expected buckets %v, got %v", expectedBuckets, h.Buckets)
 	}
 
-	// Cumulative histogram: sum of buckets 0..i
-	// index 0: 2
-	// index 1: 2 + 1 = 3
-	// index 2: 3 + 1 = 4
-	// index 3: 4 + 1 = 5
-	// index 4: 5 + 1 = 6
-	expectedCumm := []int{2, 3, 4, 5, 6}
+	// Survival cumulative counts: count of values >= threshold i
+	expectedCumm := []int{6, 4, 3, 2, 1}
 	if !slices.Equal(h.BucketsCumm, expectedCumm) {
 		t.Fatalf("expected cumulative buckets %v, got %v", expectedCumm, h.BucketsCumm)
 	}
@@ -67,7 +62,7 @@ func TestHistogramAddAll(t *testing.T) {
 	if !slices.Equal(h.Buckets, expected) {
 		t.Fatalf("expected %v, got %v", expected, h.Buckets)
 	}
-	expectedCumm := []int{1, 2, 3}
+	expectedCumm := []int{3, 2, 1}
 	if !slices.Equal(h.BucketsCumm, expectedCumm) {
 		t.Fatalf("expected cumulative %v, got %v", expectedCumm, h.BucketsCumm)
 	}

@@ -25,7 +25,7 @@ func TestWelfordStats(t *testing.T) {
 	if s.Mean() != 5.0 {
 		t.Fatalf("expected mean 5.0, got %f", s.Mean())
 	}
-	expectedVar := 32.0 / 7.0
+	expectedVar := 32.0 / 8.0
 	if math.Abs(s.Variance()-expectedVar) > 1e-6 {
 		t.Fatalf("expected variance %f, got %f", expectedVar, s.Variance())
 	}

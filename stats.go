@@ -53,10 +53,10 @@ func Mean(data []float64) (float64, error) {
 	return sum / float64(len(data)), nil
 }
 
-// StandardDeviation returns the sample standard deviation (Bessel-corrected).
+// StandardDeviation returns the population standard deviation.
 func StandardDeviation(data []float64) (float64, error) {
-	if len(data) < 2 {
-		return 0, nil
+	if len(data) == 0 {
+		return 0, errors.New("empty dataset")
 	}
 	mean, err := Mean(data)
 	if err != nil {
@@ -67,7 +67,7 @@ func StandardDeviation(data []float64) (float64, error) {
 		diff := v - mean
 		sumSq += diff * diff
 	}
-	return math.Sqrt(sumSq / float64(len(data)-1)), nil
+	return math.Sqrt(sumSq / float64(len(data))), nil
 }
 
 // Median returns the median of a pre-sorted slice.

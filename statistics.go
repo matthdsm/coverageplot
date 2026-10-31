@@ -190,10 +190,10 @@ func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverage
 	if intervalsFile == "intervals" {
 		region := fmt.Sprintf("%s:%d-%d", intervals[0].chrom, intervals[0].start, intervals[0].end)
 		slog.Debug("Running tabix for region", "region", region)
-		cmd = execCommand("tabix", coverageBed, region)
+		cmd = execCommand("tabix", "--separate-regions", coverageBed, region)
 	} else {
 		slog.Debug("Running tabix for intervals file", "file", intervalsFile)
-		cmd = execCommand("tabix", "-R", intervalsFile, coverageBed)
+		cmd = execCommand("tabix", "--separate-regions", "-R", intervalsFile, coverageBed)
 	}
 
 	stdout, err := cmd.StdoutPipe()
@@ -208,59 +208,14 @@ func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverage
 	}()
 
 	rdrCov := bufio.NewReader(stdout)
+	coverages := readCoverages(rdrCov, intervals)
+
 	var totalCoverage []float64
 	var lastInterval BedInterval
 	totalHisto := NewHistogram(defaultBucketLabels)
 
-	for _, interval := range intervals {
-		currCoverage := make([]float64, interval.Size())
-		isFirstSegment := true
-
-		for {
-			covLine, readErr := rdrCov.ReadString('\n')
-			trimmed := strings.TrimRight(covLine, "\r\n")
-			if readErr != nil && errors.Is(readErr, io.EOF) && trimmed == "" {
-				break
-			}
-
-			covToks := strings.Split(trimmed, "\t")
-			if len(covToks) < 4 {
-				if readErr != nil {
-					break
-				}
-				continue
-			}
-
-			start, err1 := strconv.Atoi(covToks[1])
-			end, err2 := strconv.Atoi(covToks[2])
-			if err1 != nil || err2 != nil {
-				continue
-			}
-
-			if isFirstSegment && (interval.start < start || interval.start >= end) {
-				continue
-			}
-			isFirstSegment = false
-
-			coverage, errParse := strconv.ParseFloat(covToks[3], 64)
-			if errParse != nil {
-				continue
-			}
-
-			for i := start; i < end; i++ {
-				idx := i - interval.start
-				if idx >= 0 && idx < len(currCoverage) {
-					currCoverage[idx] = coverage
-				}
-			}
-
-			if end >= interval.end {
-				break
-			}
-			if readErr != nil {
-				break
-			}
-		}
+	for i, interval := range intervals {
+		currCoverage := coverages[i]
 
 		if !total {
 			histo := NewHistogram(defaultBucketLabels)
@@ -306,6 +261,122 @@ func CalculateStatistics(intervals []BedInterval, intervalsFile string, coverage
 	panelStats.Total.End = len(totalCoverage)
 
 	return panelStats, nil
+}
+
+func readCoverages(rdrCov *bufio.Reader, intervals []BedInterval) [][]float64 {
+	coverages := make([][]float64, len(intervals))
+	for i, interval := range intervals {
+		coverages[i] = make([]float64, interval.Size())
+	}
+
+	peek, _ := rdrCov.Peek(1)
+	if len(peek) > 0 && peek[0] == '#' {
+		regionCovs := make(map[string][]float64)
+		var currCov []float64
+		var currStart int
+
+		for {
+			covLine, readErr := rdrCov.ReadString('\n')
+			trimmed := strings.TrimRight(covLine, "\r\n")
+			if trimmed != "" {
+				if strings.HasPrefix(trimmed, "#") {
+					header := strings.TrimPrefix(trimmed, "#")
+					header = strings.TrimPrefix(header, "chr")
+					parts := strings.Split(header, ":")
+					if len(parts) == 2 {
+						coords := strings.Split(parts[1], "-")
+						if len(coords) == 2 {
+							s1, err1 := strconv.Atoi(coords[0])
+							e1, err2 := strconv.Atoi(coords[1])
+							if err1 == nil && err2 == nil {
+								s0 := s1 - 1
+								e0 := e1
+								currStart = s0
+								key := fmt.Sprintf("%s:%d-%d", parts[0], s0, e0)
+								currCov = make([]float64, e0-s0)
+								regionCovs[key] = currCov
+							}
+						}
+					}
+				} else if currCov != nil {
+					covToks := strings.Split(trimmed, "\t")
+					if len(covToks) >= 4 {
+						start, err1 := strconv.Atoi(covToks[1])
+						end, err2 := strconv.Atoi(covToks[2])
+						coverage, errParse := strconv.ParseFloat(covToks[3], 64)
+						if err1 == nil && err2 == nil && errParse == nil {
+							for i := start; i < end; i++ {
+								idx := i - currStart
+								if idx >= 0 && idx < len(currCov) {
+									currCov[idx] = coverage
+								}
+							}
+						}
+					}
+				}
+			}
+			if readErr != nil {
+				break
+			}
+		}
+
+		for i, interval := range intervals {
+			key := fmt.Sprintf("%s:%d-%d", strings.TrimPrefix(interval.chrom, "chr"), interval.start, interval.end)
+			if cov, ok := regionCovs[key]; ok {
+				coverages[i] = cov
+			}
+		}
+		return coverages
+	}
+
+	for intIdx, interval := range intervals {
+		currCoverage := coverages[intIdx]
+		isFirstSegment := true
+
+		for {
+			covLine, readErr := rdrCov.ReadString('\n')
+			trimmed := strings.TrimRight(covLine, "\r\n")
+			if readErr != nil && errors.Is(readErr, io.EOF) && trimmed == "" {
+				break
+			}
+
+			covToks := strings.Split(trimmed, "\t")
+			if len(covToks) < 4 {
+				if readErr != nil {
+					break
+				}
+				continue
+			}
+
+			start, err1 := strconv.Atoi(covToks[1])
+			end, err2 := strconv.Atoi(covToks[2])
+			if err1 != nil || err2 != nil {
+				continue
+			}
+
+			if isFirstSegment && (interval.start < start || interval.start >= end) {
+				continue
+			}
+			isFirstSegment = false
+
+			coverage, errParse := strconv.ParseFloat(covToks[3], 64)
+			if errParse != nil {
+				continue
+			}
+
+			for i := start; i < end; i++ {
+				idx := i - interval.start
+				if idx >= 0 && idx < len(currCoverage) {
+					currCoverage[idx] = coverage
+				}
+			}
+
+			if end >= interval.end || readErr != nil {
+				break
+			}
+		}
+	}
+	return coverages
 }
 
 // CalculateTotalStatistics computes whole-file coverage statistics in a streaming single pass.

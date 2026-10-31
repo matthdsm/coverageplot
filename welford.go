@@ -35,15 +35,15 @@ func (s *Stats) Mean() float64 {
 	return s.mean
 }
 
-// Variance returns the sample variance of all values seen.
+// Variance returns the population variance of all values seen.
 func (s *Stats) Variance() float64 {
-	if s.count > 1 {
-		return s.s / float64(s.count-1)
+	if s.count > 0 {
+		return s.s / float64(s.count)
 	}
 	return 0.0
 }
 
-// Stddev returns the sample standard deviation of all values seen.
+// Stddev returns the population standard deviation of all values seen.
 func (s *Stats) Stddev() float64 {
 	return math.Sqrt(s.Variance())
 }
