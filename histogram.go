@@ -38,7 +38,7 @@ func (h *Histogram) AddCount(value float64, count int) {
 	bucketIndex := h.getBucket(value)
 	h.valueCount += count
 	h.Buckets[bucketIndex] += count
-	for i := 0; i <= bucketIndex; i++ {
+	for i := bucketIndex; i < h.bucketCount; i++ {
 		h.BucketsCumm[i] += count
 	}
 }

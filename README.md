@@ -132,7 +132,7 @@ The output emitted to stdout matches the following schema:
     },
     "Zero_bases": 0,
     "Histogram": [0, 0, 15, 25, 30, 20, 0, 0, 0, 0, 0, 0],
-    "CummulativeHistogram": [90, 90, 75, 50, 20, 0, 0, 0, 0, 0, 0, 0]
+    "CummulativeHistogram": [0, 0, 15, 40, 70, 90, 90, 90, 90, 90, 90, 90]
   },
   "Regions": [
     {

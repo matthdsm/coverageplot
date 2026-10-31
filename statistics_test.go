@@ -203,6 +203,8 @@ func TestCalculateStatistics(t *testing.T) {
 	assertEqual(t, 10.0, result.Regions[0].Min)
 	assertEqual(t, 50.0, result.Regions[0].Max)
 	assertInEpsilon(t, 33.33, result.Regions[0].Mean, 0.01)
+	assertSliceEqual(t, []int{0, 0, 5, 0, 10, 10, 5, 0, 0, 0, 0, 0}, result.Regions[0].Histogram)
+	assertSliceEqual(t, []int{0, 0, 5, 5, 15, 25, 30, 30, 30, 30, 30, 30}, result.Regions[0].CummulativeHistogram)
 
 	assertSliceEqual(t, []float64{20, 20, 20, 20, 20, 20, 20, 20, 20, 25, 25, 25, 25, 25, 25, 25, 25, 25, 25, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30}, result.Regions[1].Coverage)
 	assertEqual(t, "GENE2", result.Regions[1].Gene)
